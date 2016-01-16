@@ -1,7 +1,7 @@
 ---
 name:
-   first: Chris
-   last: Dyer
-email: cdyer@cs.cmu.edu
-leaderboard: ProfDyer
-languages: [eng,deu]
+   first: Akash
+   last: Bharadwaj
+email: akashb@andrew.cmu.edu
+leaderboard: DeeplyNeuroticNet
+languages: [eng,kan,fra,hin]
