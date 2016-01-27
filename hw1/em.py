@@ -1,7 +1,8 @@
 from nltk.stem.snowball import SnowballStemmer
 import pickle
 import itertools
-INPUT_FILE = "./data/em_test.txt"
+INPUT_FILE = "./data/dev-test-train.de-en"
+N_LINES = 1000
 MAX_ITERS = 10
 MIN_CHANGE_THRESHOLD = 0.000001
 
@@ -11,11 +12,16 @@ english_stemmer = SnowballStemmer("english")
 #Both vocabularies have a null
 german_vocab = set([''.decode('utf-8')])
 english_vocab = set([''.decode('utf-8')])
-
+instance_preprocessed = 0
 #may have to take care of unicode stuff. Also, you should probably split the compounded nouns apart.
 #may have to append null to each sentence
 def preprocess(line):
     global german_vocab, english_vocab
+    global instance_preprocessed
+    if instance_preprocessed % 1000 == 0:
+        print("Preprocessed {0} parallel inputs".format(instance_preprocessed))
+    instance_preprocessed += 1
+
     [german, english] = line.strip().lower().split('|||')
     ret_german = {}
     ret_english = {}
@@ -35,7 +41,7 @@ def preprocess(line):
 ip = open(INPUT_FILE)
 
 #May have to take care of last line being empty
-corpus = [preprocess(line) for line in ip.readlines()]
+corpus = [preprocess(line) for line in ip.readlines()[:N_LINES]]
 
 ip.close()
 
@@ -62,7 +68,7 @@ print("No. of english words (stems) :" + str(len(english_vocab)))
 iter_count = 0
 translation_init_prob = 1.0/(len(german_vocab))
 
-def stop_condition(iter_count, max_change):
+def stop_condition(iter_count, max_change=MIN_CHANGE_THRESHOLD):
     if iter_count == MAX_ITERS or max_change < MIN_CHANGE_THRESHOLD:
         return(True)
     else:
@@ -72,7 +78,12 @@ while(True):
     print("Iteration " + str(iter_count))
     iter_count += 1
     max_change = 0
+    instance_number = 0
     for parallel_instance in corpus:
+        if instance_number % 1000 == 0:
+            print("Processed {0} instances of {1}".format(\
+                instance_number,len(corpus)))
+        instance_number += 1
         german_sent_dict = parallel_instance[0]
         english_sent_dict = parallel_instance[1]
         for german_word in german_sent_dict.keys():
@@ -86,11 +97,11 @@ while(True):
                 totals[english_word] = totals.get(english_word, 0.0) + translation_probs.get((german_word, english_word), translation_init_prob)* german_word_count * english_word_count / total_s
     for english_word in totals.keys():
         for german_word in german_vocab:
-            if totals.get(english_word, 0.0) > 0 and abs(translation_probs.get((german_word, english_word), translation_init_prob) -  (counts.get((german_word, english_word), 0.0) / totals.get(english_word, 0.0))) > max_change:
-                max_change = abs(translation_probs.get((german_word, english_word), translation_init_prob) -  counts.get((german_word, english_word), 0.0) / totals.get(english_word, 0.0))
+#            if totals.get(english_word, 0.0) > 0 and abs(translation_probs.get((german_word, english_word), translation_init_prob) - (counts.get((german_word, english_word), 0.0) / totals.get(english_word, 0.0))) > max_change:
+#                max_change = abs(translation_probs.get((german_word, english_word), translation_init_prob) - counts.get((german_word, english_word), 0.0) / totals.get(english_word, 0.0))
             translation_probs[(german_word, english_word)] = counts.get((german_word, english_word), 0.0) / totals.get(english_word, 0.0)
 
-    if(stop_condition(iter_count, max_change)):
+    if(stop_condition(iter_count)):
         break
 
 #test_english_words = [english_stemmer.stem(english_word.decode('utf-8')) for english_word in ['gentlemen', 'president', 'ladies', ',', '']]
