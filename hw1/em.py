@@ -11,7 +11,7 @@ Take in parameters as arguments
 
 
 INPUT_FILE = "./data/em_test.txt"
-MAX_ITERS = 10
+MAX_ITERS = 2
 
 german_stemmer = SnowballStemmer("german")
 english_stemmer = SnowballStemmer("english")
@@ -40,7 +40,7 @@ totals = {}
 #may have to take care of unicode stuff. Also, you should probably split the compounded nouns apart.
 #may have to append null to each sentence
 def preprocess(line):
-    global german_vocab, english_vocab, totals
+    global german_vocab, english_vocab, totals, translation_probs
     [german, english] = line.strip().lower().split('|||')
     for word in german.split(' '):
         german_stemmed_word = german_stemmer.stem(word.strip().decode('utf-8')).encode('utf-8')
@@ -58,9 +58,11 @@ def preprocess(line):
 def normalize():
     global english_vocab, german_vocab, totals, translation_probs, null_val
     for english_word in english_vocab:
-        english_stemmed_word = english_stemmer.stem(english_word.decode('utf-8')).encode('utf-8')
+        #english_stemmed_word = english_stemmer.stem(english_word.decode('utf-8')).encode('utf-8')
+        english_stemmed_word = english_word
         for german_word in german_vocab:
-            german_stemmed_word = german_stemmer.stem(german_word.decode('utf-8')).encode('utf-8')
+            #german_stemmed_word = german_stemmer.stem(german_word.decode('utf-8')).encode('utf-8')
+            german_stemmed_word = german_word
             key = (german_stemmed_word, english_stemmed_word)
             if translation_probs.has_key(key): #prevent populating entries unless they occur in parallel sentences
                 translation_probs[key] = translation_probs[key] / totals[english_stemmed_word] #totals of english word should NEVER be 0
@@ -99,8 +101,55 @@ with open(INPUT_FILE) as ip:
         ip_line_counter += 1
         if(ip_line_counter % 1000 == 0):
             print("Processed %d lines"%(ip_line_counter))
+"""
+print("Before normalization")
+print(totals)
+for english_word in english_vocab:
+    print("For english word " + str(english_word) + " with total = " + str(totals[english_word]))
+    for german_word in german_vocab:
+        print(translation_probs.get((german_word, english_word), 0.0))
+#print(translation_probs)
+"""
+raw_input("About to perform normalization. Press enter")
 
 normalize()
+"""
+print("After normalization")
+print(totals)
+for english_word in english_vocab:
+    print("For english word " + str(english_word) + " with total = " + str(totals[english_word]))
+    for german_word in german_vocab:
+        print(translation_probs.get((german_word, english_word), 0.0))
+"""
+test_english_words = [english_word for english_word in english_vocab]
+#test_english_words = [english_stemmer.stem(english_word.lower().strip(' \t\r\n').decode('utf-8')).encode('utf-8') for english_word in ['please']]
+
+print("Spot checking before EM ")
+print(test_english_words)
+
+print("After normalization case:")
+
+for english_word in test_english_words:
+    max_prob_word = None
+    max_prob = 0.0
+    tot_conditional_prob = 0.0
+    for german_word in german_vocab:
+        if translation_probs.get((german_word,english_word), 0.0) != 0.0:
+            if translation_probs.get((german_word,english_word), 0.0) > max_prob:
+                max_prob = translation_probs.get((german_word,english_word), 0.0)
+                max_prob_word = german_word
+                #print("Probability p(%s | %s)"%(german_word, english_word))
+                #print(translation_probs.get((german_word,english_word), 0.0))
+        tot_conditional_prob += translation_probs.get((german_word,english_word), 0.0)
+    if(abs(tot_conditional_prob - 1.0) > 0.00000000001):  # Difference may arise
+        # due to finite precision, rounding or lack of representative ability of arbitrary reals using binary
+        #if (abs(tot_conditional_prob - 1.0) != 0.0):
+        print('Tot_conditional prob for english word ' + str(english_word) + ' = ' + str(tot_conditional_prob))
+        raw_input("Press a key to continue")
+    print("Most likely word for ", english_word, " is the german word ", max_prob_word, " with translation probability ", max_prob)
+    #assert abs(tot_conditional_prob - 1.0) < 0.000000000001, 'Tot conditional probability != 1 !!!'
+raw_input("Press enter")
+
 
 print("No. of german words (stems) : " + str(len(german_vocab)))
 print("No. of english words (stems) :" + str(len(english_vocab)))
@@ -156,8 +205,9 @@ while(True):#until convergence or max_iters
         model_dump.close()
         break
 
-test_english_words = [english_stemmer.stem(english_word.lower().strip(' \t\r\n').decode('utf-8')).encode('utf-8') for english_word in random.sample(english_vocab, 5)]
+#test_english_words = [english_stemmer.stem(english_word.lower().strip(' \t\r\n').decode('utf-8')).encode('utf-8') for english_word in random.sample(english_vocab, 5)]
 #Randomly select 5 words to perform sanity spot checks
+test_english_words = [english_word for english_word in english_vocab] #should not further stem words in english vocab
 
 print("Spot checking for the following English words ")
 print(test_english_words)
@@ -171,12 +221,14 @@ for english_word in test_english_words:
             if translation_probs.get((german_word,english_word), 0.0) > max_prob:
                 max_prob = translation_probs.get((german_word,english_word), 0.0)
                 max_prob_word = german_word
-            print("Probability p(%s | %s)"%(german_word, english_word))
-            print(translation_probs.get((german_word,english_word), 0.0))
+            #print("Probability p(%s | %s)"%(german_word, english_word))
+            #print(translation_probs.get((german_word,english_word), 0.0))
         tot_conditional_prob += translation_probs.get((german_word,english_word), 0.0)
-    print('Tot_conditional prob = ' + str(tot_conditional_prob))
+    if(abs(tot_conditional_prob - 1.0) > 0.00000000001):
+        print('Tot_conditional prob for english word ' + str(english_word) + ' = ' + str(tot_conditional_prob))
+        raw_input("Press a key to continue")
     print("Most likely word for ", english_word, " is the german word ", max_prob_word, " with translation probability ", max_prob)
-    assert abs(tot_conditional_prob - 1.0) < 0.000000000001, 'Tot conditional probability != 1 !!!' # Difference may arise
+    #assert abs(tot_conditional_prob - 1.0) < 0.000000000001, 'Tot conditional probability != 1 !!!' # Difference may arise
     # due to finite precision, rounding or lack of representative ability of arbitrary reals using binary
 
 
