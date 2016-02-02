@@ -1,67 +1,53 @@
 # -*- coding: utf-8 -*-
 from nltk.stem.snowball import SnowballStemmer
+import random
 import pickle
-import sys
+
+"""
+To do:
+Package this into a class
+Take in parameters as arguments
+"""
+
 
 INPUT_FILE = "./data/em_test.txt"
 MAX_ITERS = 10
-MIN_CHANGE_THRESHOLD = 0.000001
 
 german_stemmer = SnowballStemmer("german")
 english_stemmer = SnowballStemmer("english")
 
+null_val = ''.decode('utf-8').encode('utf-8')
+
 #Both vocabularies have a null
-german_vocab = set([''.decode('utf-8').encode('utf-8')])
-english_vocab = set([''.decode('utf-8').encode('utf-8')])
+german_vocab = set([null_val])
+english_vocab = set([null_val])
 
-german_indexer = {'' : 0}
-english_indexer = {'' : 0}
-german_inv_indexer = {0 : ''}
-english_inv_indexer = {0 : ''}
-
-max_english_index = 1
-max_german_index = 1
-
-
-#vocab_cartesian = set(itertools.product(german_vocab, english_vocab))
-#Each element is {<german word>, <english word> : 1/|german vocab|} which corresponds to p(german word | english word)
 #Conditional probabilities are initialized to a uniform distribution over all german words conditioned on an english
-#word. However, the initialization doesn't matter since EM for model 1 IBM is guaranteed to converge to the same values.
-#Indeed this is why IBM models 2 - 5 build on top of model 1.
-#translation_probs = dict.fromkeys(vocab_cartesian, 1.0/(len(german_vocab)))
+#word. However, most words never co-occurr. To save space and avoid storing such parameters that are bound to be 0, we
+#only store those conditional probabilities involving word pairs that actually co-occur.
 
 translation_probs = {}
 
 #Expected count number of alignments between each german word - english word pair
-#counts = dict.fromkeys(vocab_cartesian, 0.0)
 
 counts = {}
 
 #Expected number of all alignments involving an english word (sum counts over all german words while fixing the english
 #word
-#totals = dict.fromkeys(english_vocab, 0.0)
 
 totals = {}
 
 #may have to take care of unicode stuff. Also, you should probably split the compounded nouns apart.
 #may have to append null to each sentence
 def preprocess(line):
-    global german_vocab, english_vocab, german_indexer, german_inv_indexer, english_indexer, english_inv_indexer, max_german_index, max_english_index
+    global german_vocab, english_vocab, totals
     [german, english] = line.strip().lower().split('|||')
     for word in german.split(' '):
         german_stemmed_word = german_stemmer.stem(word.strip().decode('utf-8')).encode('utf-8')
-        if (not german_indexer.has_key(german_stemmed_word)):
-            german_indexer[german_stemmed_word] = max_german_index
-            german_inv_indexer[max_german_index] = german_stemmed_word
-            max_german_index += 1
-            german_vocab.add(german_stemmed_word)
+        german_vocab.add(german_stemmed_word)
     for word in english.split(' '):
         english_stemmed_word = english_stemmer.stem(word.strip().decode('utf-8')).encode('utf-8')
-        if (not english_indexer.has_key(english_stemmed_word)):
-            english_indexer[english_stemmed_word] = max_english_index
-            english_inv_indexer[max_english_index] = english_stemmed_word
-            max_english_index += 1
-            english_vocab.add(english_stemmed_word)
+        english_vocab.add(english_stemmed_word)
         for word in german.split(' '):
             german_stemmed_word = german_stemmer.stem(word.strip().decode('utf-8')).encode('utf-8')
             key = (german_stemmed_word, english_stemmed_word)
@@ -70,26 +56,11 @@ def preprocess(line):
             translation_probs[key] = 1.0
 
 def normalize():
-    global english_vocab, german_vocab, totals, translation_probs
-    null_val = ''
+    global english_vocab, german_vocab, totals, translation_probs, null_val
     for english_word in english_vocab:
-        #english_stemmed_word = english_stemmer.stem(english_word)
-        try:
-            english_stemmed_word = english_stemmer.stem(english_word.decode('utf-8')).encode('utf-8')
-        except:
-            e = sys.exc_info()
-            print(english_word)
-            print("Failed for english word because of ", english_word, " which caused error ", e)
-            raw_input('press any key to continue')
+        english_stemmed_word = english_stemmer.stem(english_word.decode('utf-8')).encode('utf-8')
         for german_word in german_vocab:
-            #german_stemmed_word = german_stemmer.stem(german_word)
-            try:
-                german_stemmed_word = german_stemmer.stem(german_word.decode('utf-8')).encode('utf-8')
-            except:
-                e = sys.exc_info()[0]
-                print(german_word)
-                print("Failed because of ", german_word, " which cause the error ", e)
-                raw_input('press any key to continue')
+            german_stemmed_word = german_stemmer.stem(german_word.decode('utf-8')).encode('utf-8')
             key = (german_stemmed_word, english_stemmed_word)
             if translation_probs.has_key(key): #prevent populating entries unless they occur in parallel sentences
                 translation_probs[key] = translation_probs[key] / totals[english_stemmed_word] #totals of english word should NEVER be 0
@@ -106,14 +77,28 @@ def get_parallel_instance(corpus_line):
     for word in english.split(' '):
         english_stemmed_word = english_stemmer.stem(word.strip().decode('utf-8')).encode('utf-8')
         ret_english[english_stemmed_word] = ret_english.get(english_stemmed_word, 0) + 1
-    ret_german[''] = 1 # null
-    ret_english[''] = 1 # null
+    ret_german[null_val] = 1 # null
+    ret_english[null_val] = 1 # null
     return ([ret_german, ret_english])
+
+
+def stop_condition(iter_count): # Currently only checking for iteration limit. Ideally, we should also check for
+    # convergence, i.e., when parameters change by value below a certain threshold
+    if iter_count == MAX_ITERS:
+        return(True)
+    else:
+        return(False)
+
+ip_line_counter = 0
 
 #May have to take care of last line being empty
 with open(INPUT_FILE) as ip:
+    print("Starting to process corpus")
     for line in ip:
         preprocess(line)
+        ip_line_counter += 1
+        if(ip_line_counter % 1000 == 0):
+            print("Processed %d lines"%(ip_line_counter))
 
 normalize()
 
@@ -122,22 +107,13 @@ print("No. of english words (stems) :" + str(len(english_vocab)))
 
 iter_count = 0
 
-def stop_condition(iter_count): # Currently only checking for iteration limit. Ideally, we should also check for
-# convergence, i.e., when parameters change by value below a certain threshold
-    if iter_count == MAX_ITERS:
-        return(True)
-    else:
-        return(False)
-
 """
 EM algorithm for estimating the translation probablities
 See https://www.cl.cam.ac.uk/teaching/1011/L102/clark-lecture3.pdf for a good tutorial
 """
 
 while(True):#until convergence or max_iters
-    #if iter_count % 5 == 0:
-    #    print("Iteration " + str(iter_count))
-    print("Iteration " + str(iter_count))
+    print("Iteration " + str(iter_count + 1))
     iter_count += 1
     counts = {} # All counts default to 0. These are counts of (german, english) word pairs
     totals = {} # All totals default to 0. These are sums of counts (marginalized over all foreign words), for each
@@ -167,20 +143,25 @@ while(True):#until convergence or max_iters
                 translation_probs[word_pair] = counts.get((german_word, english_word), 0.0) / totals.get(english_word, 0.0)
                 # Neither domain nor counts should never be 0 given our domain restriction
 
+    if(iter_count % 2 == 0): #Store the model every other iteration
+        print("Storing model after %d iterations"%(iter_count))
+        model_dump = open('./translation.model', 'wb')
+        pickle.dump(translation_probs, model_dump)
+        model_dump.close()
+
     if(stop_condition(iter_count)):
+        print("Storing model after %d iterations" % (iter_count))
+        model_dump = open('./translation.model', 'wb')
+        pickle.dump(translation_probs, model_dump)
+        model_dump.close()
         break
 
-test_english_words = [english_stemmer.stem(english_word.lower().strip(' \t\r\n').decode('utf-8')).encode('utf-8') for english_word in ['European', 'President']]
+test_english_words = [english_stemmer.stem(english_word.lower().strip(' \t\r\n').decode('utf-8')).encode('utf-8') for english_word in random.sample(english_vocab, 5)]
+#Randomly select 5 words to perform sanity spot checks
 
-"""
-print(totals)
-raw_input("Press key to continue")
-print(counts)
-raw_input("Press key to continue")
-print(translation_probs)
-raw_input("Press key to continue")
-"""
-#test_english_words = []
+print("Spot checking for the following English words ")
+print(test_english_words)
+
 for english_word in test_english_words:
     max_prob_word = None
     max_prob = 0.0
@@ -207,8 +188,3 @@ print("No of cross product entries required: ", len(german_vocab) * len(english_
 print("Num of conditional probabilities actually stored: ", len(translation_probs.keys()))
 print("Num of counts actually stored: ", len(counts.keys()))
 print("Num of totals actually stored: ", len(totals.keys()))
-#MAKE A CHECK HERE FOR SUMMATION OF PROBABILITIES TO ONE!!
-
-model_dump = open('./translation.model', 'wb')
-pickle.dump(translation_probs, model_dump)
-model_dump.close()
