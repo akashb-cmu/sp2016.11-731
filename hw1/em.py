@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 from nltk.stem.snowball import SnowballStemmer
 import pickle
 import sys
@@ -10,13 +11,13 @@ german_stemmer = SnowballStemmer("german")
 english_stemmer = SnowballStemmer("english")
 
 #Both vocabularies have a null
-german_vocab = set([''.decode('utf-8')])
-english_vocab = set([''.decode('utf-8')])
+german_vocab = set([''.decode('utf-8').encode('utf-8')])
+english_vocab = set([''.decode('utf-8').encode('utf-8')])
 
-german_indexer = {''.decode('utf-8') : 0}
-english_indexer = {''.decode('utf-8') : 0}
-german_inv_indexer = {0 : ''.decode('utf-8')}
-english_inv_indexer = {0 : ''.decode('utf-8')}
+german_indexer = {'' : 0}
+english_indexer = {'' : 0}
+german_inv_indexer = {0 : ''}
+english_inv_indexer = {0 : ''}
 
 max_english_index = 1
 max_german_index = 1
@@ -48,21 +49,21 @@ def preprocess(line):
     global german_vocab, english_vocab, german_indexer, german_inv_indexer, english_indexer, english_inv_indexer, max_german_index, max_english_index
     [german, english] = line.strip().lower().split('|||')
     for word in german.split(' '):
-        german_stemmed_word = german_stemmer.stem(word.strip().decode('utf-8'))
+        german_stemmed_word = german_stemmer.stem(word.strip().decode('utf-8')).encode('utf-8')
         if (not german_indexer.has_key(german_stemmed_word)):
             german_indexer[german_stemmed_word] = max_german_index
             german_inv_indexer[max_german_index] = german_stemmed_word
             max_german_index += 1
             german_vocab.add(german_stemmed_word)
     for word in english.split(' '):
-        english_stemmed_word = english_stemmer.stem(word.decode('utf-8'))
+        english_stemmed_word = english_stemmer.stem(word.strip().decode('utf-8')).encode('utf-8')
         if (not english_indexer.has_key(english_stemmed_word)):
             english_indexer[english_stemmed_word] = max_english_index
             english_inv_indexer[max_english_index] = english_stemmed_word
             max_english_index += 1
             english_vocab.add(english_stemmed_word)
         for word in german.split(' '):
-            german_stemmed_word = german_stemmer.stem(word.strip().decode('utf-8'))
+            german_stemmed_word = german_stemmer.stem(word.strip().decode('utf-8')).encode('utf-8')
             key = (german_stemmed_word, english_stemmed_word)
             if not translation_probs.has_key(key):
                 totals[english_stemmed_word] = totals.get(english_stemmed_word, 0) + 1.0
@@ -70,19 +71,25 @@ def preprocess(line):
 
 def normalize():
     global english_vocab, german_vocab, totals, translation_probs
-    null_val = ''.decode('utf-8')
+    null_val = ''
     for english_word in english_vocab:
-        english_stemmed_word = english_stemmer.stem(english_word.decode('utf-8'))
+        #english_stemmed_word = english_stemmer.stem(english_word)
+        try:
+            english_stemmed_word = english_stemmer.stem(english_word.decode('utf-8')).encode('utf-8')
+        except:
+            e = sys.exc_info()
+            print(english_word)
+            print("Failed for english word because of ", english_word, " which caused error ", e)
+            raw_input('press any key to continue')
         for german_word in german_vocab:
-            german_stemmed_word = german_stemmer.stem(german_word.decode('utf-8'))
-            """
-            print(german_word)
+            #german_stemmed_word = german_stemmer.stem(german_word)
             try:
-                german_stemmed_word = german_stemmer.stem(german_word.decode('utf-8'))
+                german_stemmed_word = german_stemmer.stem(german_word.decode('utf-8')).encode('utf-8')
             except:
                 e = sys.exc_info()[0]
-                print("Failed because of ", e)
-            """
+                print(german_word)
+                print("Failed because of ", german_word, " which cause the error ", e)
+                raw_input('press any key to continue')
             key = (german_stemmed_word, english_stemmed_word)
             if translation_probs.has_key(key): #prevent populating entries unless they occur in parallel sentences
                 translation_probs[key] = translation_probs[key] / totals[english_stemmed_word] #totals of english word should NEVER be 0
@@ -94,13 +101,13 @@ def get_parallel_instance(corpus_line):
     ret_german = {}
     ret_english = {}
     for word in german.split(' '):
-        german_stemmed_word = german_stemmer.stem(word.strip().decode('utf-8'))
+        german_stemmed_word = german_stemmer.stem(word.strip().decode('utf-8')).encode('utf-8')
         ret_german[german_stemmed_word] = ret_german.get(german_stemmed_word, 0) + 1
     for word in english.split(' '):
-        english_stemmed_word = english_stemmer.stem(word.decode('utf-8'))
+        english_stemmed_word = english_stemmer.stem(word.strip().decode('utf-8')).encode('utf-8')
         ret_english[english_stemmed_word] = ret_english.get(english_stemmed_word, 0) + 1
-    ret_german[''.decode('utf-8')] = 1 # null
-    ret_english[''.decode('utf-8')] = 1 # null
+    ret_german[''] = 1 # null
+    ret_english[''] = 1 # null
     return ([ret_german, ret_english])
 
 #May have to take care of last line being empty
@@ -128,8 +135,9 @@ See https://www.cl.cam.ac.uk/teaching/1011/L102/clark-lecture3.pdf for a good tu
 """
 
 while(True):#until convergence or max_iters
-    if iter_count % 5 == 0:
-        print("Iteration " + str(iter_count))
+    #if iter_count % 5 == 0:
+    #    print("Iteration " + str(iter_count))
+    print("Iteration " + str(iter_count))
     iter_count += 1
     counts = {} # All counts default to 0. These are counts of (german, english) word pairs
     totals = {} # All totals default to 0. These are sums of counts (marginalized over all foreign words), for each
@@ -162,16 +170,32 @@ while(True):#until convergence or max_iters
     if(stop_condition(iter_count)):
         break
 
-test_english_words = [english_stemmer.stem(english_word.lower().decode('utf-8')) for english_word in ['Deputy', 'gentlemen', 'president', 'welcome']]
+test_english_words = [english_stemmer.stem(english_word.lower().strip(' \t\r\n').decode('utf-8')).encode('utf-8') for english_word in ['European', 'President']]
+
+"""
+print(totals)
+raw_input("Press key to continue")
+print(counts)
+raw_input("Press key to continue")
+print(translation_probs)
+raw_input("Press key to continue")
+"""
 #test_english_words = []
 for english_word in test_english_words:
+    max_prob_word = None
+    max_prob = 0.0
     tot_conditional_prob = 0.0
     for german_word in german_vocab:
-        print("Probability p(%s | %s)"%(german_word, english_word))
-        print(translation_probs.get((german_word.decode('utf-8'),english_word), 0.0))
-        tot_conditional_prob += translation_probs.get((german_word.decode('utf-8'),english_word), 0.0)
+        if translation_probs.get((german_word,english_word), 0.0) != 0.0:
+            if translation_probs.get((german_word,english_word), 0.0) > max_prob:
+                max_prob = translation_probs.get((german_word,english_word), 0.0)
+                max_prob_word = german_word
+            print("Probability p(%s | %s)"%(german_word, english_word))
+            print(translation_probs.get((german_word,english_word), 0.0))
+        tot_conditional_prob += translation_probs.get((german_word,english_word), 0.0)
     print('Tot_conditional prob = ' + str(tot_conditional_prob))
-    assert tot_conditional_prob - 1.0 < 0.000000000001, 'Tot conditional probability != 1 !!!' # Difference may arise
+    print("Most likely word for ", english_word, " is the german word ", max_prob_word, " with translation probability ", max_prob)
+    assert abs(tot_conditional_prob - 1.0) < 0.000000000001, 'Tot conditional probability != 1 !!!' # Difference may arise
     # due to finite precision, rounding or lack of representative ability of arbitrary reals using binary
 
 
