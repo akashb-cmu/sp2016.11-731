@@ -3,9 +3,9 @@ from nltk.stem.snowball import SnowballStemmer
 import random
 import pickle
 import itertools
+import pdb
 
-class EM_model1(object):
-
+class Model1(object):
     german_stemmer = SnowballStemmer("german")
     english_stemmer = SnowballStemmer("english")
 
@@ -30,6 +30,59 @@ class EM_model1(object):
 
     totals = {}
 
+    def __init__(self, parameter_file):
+        self.translation_probs = pickle.load(open(parameter_file,'rb'))
+        self.INPUT_FILE = None
+
+    def get_params(self):
+        return(self.translation_probs)
+
+    def get_german_stem(self, word):
+        return(self.german_stemmer.stem(word.strip().decode('utf-8')).encode('utf-8'))
+
+    def get_english_stem(self, word):
+        return(self.english_stemmer.stem(word.strip().decode('utf-8')).encode('utf-8'))
+
+    def get_translation_prob(self, german_stem, english_stem):
+        return self.translation_probs.get((german_stem,english_stem),0.0)
+
+    def get_parallel_instance(self, corpus_line):
+        [german, english] = corpus_line.strip().lower().split(' ||| ')
+        return ([self.german_stemmer.stem(word.strip().decode('utf-8')).encode('utf-8')
+                 for word in german.split(' ')],
+                [self.english_stemmer.stem(word.strip().decode('utf-8')).encode('utf-8')
+                 for word in english.split(' ')])
+
+    def get_counts(sent):
+        """ 
+        Returns a dicts mapping stemmed words to
+        their respective counts in the sentence sent.
+        Also, one null token count is added to sentence
+        """
+        ret = {self.null_val:1} 
+        for word in sent:
+            ret[word] = ret.get(word, 0) + 1
+        return ret
+
+    def get_alignment(self, german, english):
+        """Returns model1 alignment for a DE/EN parallel sentence pair.
+           For each english word, identifies the best german word to align to"""
+        english.append(self.null_val)
+        alignment = []
+        for (i, g_i) in enumerate(german): 
+            gs_i = self.get_german_stem(g_i)
+            best = -1
+            bestscore = 0
+            for (j, e_j) in enumerate(english):
+                es_j = self.get_english_stem(e_j)
+                val = self.get_translation_prob(gs_i,es_j)
+                if best==-1 or val>bestscore:
+                    bestscore = val
+                    best = j
+            if best < len(english)-1:
+                yield (i,best) # don't yield anything for NULL alignment
+
+class EM_model1(Model1):
 
     def __init__(self, input_file, output_file, n_iterations):
         self.MAX_ITERS = n_iterations
@@ -104,21 +157,6 @@ class EM_model1(object):
                 elif english_stemmed_word == self.null_val:
                     self.translation_probs[key] = 1.0 / len(self.german_vocab)
 
-    def get_parallel_instance(self, corpus_line):
-        [german, english] = corpus_line.strip().lower().split('|||')
-        ret_german = {}
-        ret_english = {}
-        for word in german.split(' '):
-            german_stemmed_word = self.german_stemmer.stem(word.strip().decode('utf-8')).encode('utf-8')
-            ret_german[german_stemmed_word] = ret_german.get(german_stemmed_word, 0) + 1
-        for word in english.split(' '):
-            english_stemmed_word = self.english_stemmer.stem(word.strip().decode('utf-8')).encode('utf-8')
-            ret_english[english_stemmed_word] = ret_english.get(english_stemmed_word, 0) + 1
-        ret_german[self.null_val] = 1 # null added to sentence
-        ret_english[self.null_val] = 1 # null added to sentence
-        return ([ret_german, ret_english])
-
-
     def stop_condition(self, iter_count): # Currently only checking for iteration limit. Ideally, we should also check for
         # convergence, i.e., when parameters change by value below a certain threshold
         if iter_count == self.MAX_ITERS:
@@ -128,6 +166,7 @@ class EM_model1(object):
 
 
     def estimate_params(self):
+
         iter_count = 0
 
         """
@@ -141,12 +180,14 @@ class EM_model1(object):
             self.counts = {} # All counts default to 0. These are counts of (german, english) word pairs
             self.totals = {} # All totals default to 0. These are sums of counts (marginalized over all foreign words), for each
             # english word
-            with open(self.INPUT_FILE) as ip_file: # Reading input one line at a time from file. No need to store file in memory
-                for line in ip_file: # Read corpus in line by line instead of storing the whole thing in memory
-                    parallel_instance = self.get_parallel_instance(line) # returns two dicts mapping german and english words to
-                    # their respective counts in the parallel sentence pair
-                    german_sent_dict = parallel_instance[0]
-                    english_sent_dict = parallel_instance[1]
+            with open(self.INPUT_FILE) as ip_file: 
+                # Read one line at a time from file. No need to store file in memory
+                for line in ip_file: 
+                    # parse the line
+                    german_sent,english_sent = self.get_parallel_instance(line) 
+
+                    german_sent_dict = self.get_counts(german_sent)
+                    english_sent_dict = self.get_counts(english_sent)
                     for german_word in german_sent_dict.keys(): # For each unique german word in the german sentence
                         german_word_count = german_sent_dict[german_word] # Its count in the german sentence
                         total_s = 0.0  # Expected count of number of alignments for this german word with any english word
@@ -216,13 +257,4 @@ class EM_model1(object):
             if n_sample is not None:
                 print("Most likely word for ", english_word, " is the german word ", max_prob_word, " with translation probability ", max_prob)
         print("Sanity check passed!")
-
-    def get_params(self):
-        return(self.translation_probs)
-
-    def get_german_stem(self, word):
-        return(self.german_stemmer.stem(word.strip().decode('utf-8')).encode('utf-8'))
-
-    def get_english_stem(self, word):
-        return(self.english_stemmer.stem(word.strip().decode('utf-8')).encode('utf-8'))
 
