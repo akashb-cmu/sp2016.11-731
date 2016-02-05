@@ -4,7 +4,7 @@ import random
 import pickle
 import itertools
 import pdb
-#from aligntools import PosTagger
+from aligntools import PosTagger
 
 class Model1(object):
     german_stemmer = SnowballStemmer("german")
@@ -100,7 +100,7 @@ class POS_decoder(Model1):
         returns 1+TUNE_POS_WEIGHT if the POS tags are aligned else 1
         """
         return 1+self.TUNE_POS_WEIGHT*(
-            features.get(tag_german,self.null_val)==features.get(tag_english,self.null_val))
+            features.get("tag_german",self.null_val)==features.get("tag_english",self.null_val))
 
     def get_alignment(self, german, english):
         """
@@ -109,12 +109,12 @@ class POS_decoder(Model1):
         Applies a prior which assigns higher probability to alignments which preserve POS tags.
         """
         alignment = []
-        gtags = self.tagger.parse(german,"DE")
-        etags = self.tagger.parse(english,"EN")
+        gtags = self.tagger.parse(german,"de")
+        etags = self.tagger.parse(english,"en")
         for (i, g_i) in enumerate(german): 
             gs_i = self.get_german_stem(g_i)
             best = -1
-            bestscore = self.prior(tag_german=gtags[i])*self.get_translation_prob(gs_i,self.null_val)
+            bestscore = self.get_prior(tag_german=gtags[i])*self.get_translation_prob(gs_i,self.null_val)
             for (j, e_j) in enumerate(english):
                 es_j = self.get_english_stem(e_j)
                 val = self.get_prior(tag_german=gtags[i],tag_english=etags[j])*\
