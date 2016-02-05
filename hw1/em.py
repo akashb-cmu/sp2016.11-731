@@ -4,6 +4,7 @@ import random
 import pickle
 import itertools
 import pdb
+#from aligntools import PosTagger
 
 class Model1(object):
     german_stemmer = SnowballStemmer("german")
@@ -64,9 +65,14 @@ class Model1(object):
             ret[word] = ret.get(word, 0) + 1
         return ret
 
+    def get_prior(self,**kwargs):
+        return 1
+
     def get_alignment(self, german, english):
-        """Returns model1 alignment for a DE/EN parallel sentence pair.
-           For each english word, identifies the best german word to align to"""
+        """
+        Returns model1 alignment for a DE/EN parallel sentence pair.
+        For each german word, identifies the best english word (or NULL) to align to
+        """
         english.append(self.null_val)
         alignment = []
         for (i, g_i) in enumerate(german): 
@@ -75,12 +81,50 @@ class Model1(object):
             bestscore = 0
             for (j, e_j) in enumerate(english):
                 es_j = self.get_english_stem(e_j)
-                val = self.get_translation_prob(gs_i,es_j)
+                val = self.get_prior()*self.get_translation_prob(gs_i,es_j)
                 if best==-1 or val>bestscore:
                     bestscore = val
                     best = j
             if best < len(english)-1:
                 yield (i,best) # don't yield anything for NULL alignment
+
+class POS_decoder(Model1):
+    TUNE_POS_WEIGHT = 1
+
+    def __init__(self, parameter_file):
+        super(POS_decoder,self).__init__(parameter_file)
+        self.tagger = PosTagger()
+
+    def get_prior(self, **features):
+        """
+        returns 1+TUNE_POS_WEIGHT if the POS tags are aligned else 1
+        """
+        return 1+self.TUNE_POS_WEIGHT*(
+            features.get(tag_german,self.null_val)==features.get(tag_english,self.null_val))
+
+    def get_alignment(self, german, english):
+        """
+        Returns Model1 alignment for a DE/EN parallel sentence pair.
+        For each german word, identifies the best english word (or NULL) to align to
+        Applies a prior which assigns higher probability to alignments which preserve POS tags.
+        """
+        alignment = []
+        gtags = self.tagger.parse(german,"DE")
+        etags = self.tagger.parse(english,"EN")
+        for (i, g_i) in enumerate(german): 
+            gs_i = self.get_german_stem(g_i)
+            best = -1
+            bestscore = self.prior(tag_german=gtags[i])*self.get_translation_prob(gs_i,self.null_val)
+            for (j, e_j) in enumerate(english):
+                es_j = self.get_english_stem(e_j)
+                val = self.get_prior(tag_german=gtags[i],tag_english=etags[j])*\
+                      self.get_translation_prob(gs_i,es_j)
+                if best==-1 or val>bestscore:
+                    bestscore = val
+                    best = j
+            if best >= 0:
+                yield (i,best) # don't yield anything for NULL alignment
+        
 
 class EM_model1(Model1):
 
