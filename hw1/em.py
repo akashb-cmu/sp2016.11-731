@@ -123,31 +123,66 @@ class POS_decoder(Model1):
             if best >= 0:
                 yield (i,best) # don't yield anything for NULL alignment
 
-class DiagonalAligner(POS_decoder):
-	""" Adds a diagonal prior to the POS prior. Uses Model 1 alignment """
-	DIAG_WEIGHT = .7
+class DiagonalAligner(Model1):
+    """ Adds a diagonal prior to the POS prior. Uses Model 1 alignment """
+    DIAG_WEIGHT = .7
+    TUNE_POS_WEIGHT = .65
 
     def __init__(self, parameter_file):
         super(DiagonalAligner,self).__init__(parameter_file)
         self.tagger = PosTagger()
 
     def get_prior(self, **features):
+        """ 2 priors:
+            * POS tags 1+TUNE_POS_WEIGHT if the POS tags are aligned else 1
+            * diagonal prior
         """
-		2 priors:
-			* POS tags 1+TUNE_POS_WEIGHT if the POS tags are aligned else 1
-			* diagonal aligner 
-        """
-	
-		pos_prior = 1+self.TUNE_POS_WEIGHT*(
+        pos_prior = 1+self.TUNE_POS_WEIGHT*(
             features.get("tag_german",self.null_val)==features.get("tag_english",self.null_val))
 
-		de_idx = 1.0*features.get("position_german", self.null_val)
-		de_len = 1.0*features.get("length_german", self.null_val)
-		en_idx = 1.0*features.get("position_english", self.null_val)
-		en_len = 1.0*features.get("length_english", self.null_val)
+        de_idx = float(features.get("position_german", self.null_val))
+        de_len = float(features.get("length_german", self.null_val))
+        en_idx = float(features.get("position_english", self.null_val))
+        en_len = float(features.get("length_english", self.null_val))
 
-		diag_prior = (1 - abs(de_idx/de_len - en_idx/en_len)) * self.DIAG_WEIGHT
-		prior = pos_prior + diag_prior
+        diag_prior = (1 - abs(de_idx/de_len - en_idx/en_len)) * self.DIAG_WEIGHT
+        return pos_prior + diag_prior
+
+    def get_alignment(self, german, english):
+        """
+        Returns Model1 alignment for a DE/EN parallel sentence pair.
+        For each german word, identifies the best english word (or NULL) to align to
+        Applies a prior which assigns higher probability to alignments which preserve POS tags and are diagonally aligned
+        """
+        alignment = []
+        gtags = self.tagger.parse(german,"de")
+        etags = self.tagger.parse(english,"en")
+        english.append(self.null_val)
+        for (i, g_i) in enumerate(german): 
+            german_len = len(german)
+            gs_i = self.get_german_stem(g_i).lower()
+            best = -1
+            bestscore = 0
+            for (j, e_j) in enumerate(english):
+                english_len = len(english)
+                es_j = self.get_english_stem(e_j).lower()
+
+                # handle null
+                if e_j == self.null_val:
+                    prior = 1.0
+                else:
+                    prior = self.get_prior(tag_german=gtags[i],position_german=i,length_german=german_len,tag_english=etags[j],position_english=j,length_english=english_len) 
+                val = prior * self.get_translation_prob(gs_i,es_j)
+                if best==-1 or val>bestscore:
+                    bestscore = val
+                    best = j
+            if best < len(english)-1:
+                yield (i,best) # don't yield anything for NULL alignment
+
+    def get_parallel_instance(self, corpus_line):
+        [german, english] = corpus_line.strip().split(' ||| ')
+        return ([word for word in german.split(' ')],
+                [word for word in english.split(' ')])
 
 class EM_model1(Model1):
 
