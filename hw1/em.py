@@ -48,13 +48,11 @@ class Model1(object):
         return self.translation_probs.get((german_stem,english_stem),0.0)
 
     def get_parallel_instance(self, corpus_line):
-        [german, english] = corpus_line.strip().lower().split(' ||| ')
-        return ([self.german_stemmer.stem(word.strip().decode('utf-8')).encode('utf-8')
-                 for word in german.split(' ')],
-                [self.english_stemmer.stem(word.strip().decode('utf-8')).encode('utf-8')
-                 for word in english.split(' ')])
+        [german, english] = corpus_line.strip().split(' ||| ')
+        return ([self.get_german_stem(word).lower() for word in german.split(' ')],
+                [self.get_english_stem(word).lower() for word in english.split(' ')])
 
-    def get_counts(sent):
+    def get_counts(self, sent):
         """ 
         Returns a dicts mapping stemmed words to
         their respective counts in the sentence sent.
@@ -89,7 +87,7 @@ class Model1(object):
                 yield (i,best) # don't yield anything for NULL alignment
 
 class POS_decoder(Model1):
-    TUNE_POS_WEIGHT = 1
+    TUNE_POS_WEIGHT = .65
 
     def __init__(self, parameter_file):
         super(POS_decoder,self).__init__(parameter_file)
@@ -124,7 +122,6 @@ class POS_decoder(Model1):
                     best = j
             if best >= 0:
                 yield (i,best) # don't yield anything for NULL alignment
-        
 
 class EM_model1(Model1):
 
@@ -146,30 +143,6 @@ class EM_model1(Model1):
 
         self.normalize()
 
-        """
-        #Pre-EM sanity check for initialization
-        test_english_words = [english_word for english_word in english_vocab]
-        #test_english_words = [english_stemmer.stem(english_word.lower().strip(' \t\r\n').decode('utf-8')).encode('utf-8') for english_word in ['please']]
-
-        print("Spot checking before EM ")
-        print(test_english_words)
-
-        print("After normalization case:")
-
-        for english_word in test_english_words:
-            max_prob_word = None
-            max_prob = 0.0
-            tot_conditional_prob = 0.0
-            for german_word in german_vocab:
-                if translation_probs.get((german_word,english_word), 0.0) != 0.0:
-                    if translation_probs.get((german_word,english_word), 0.0) > max_prob:
-                        max_prob = translation_probs.get((german_word,english_word), 0.0)
-                        max_prob_word = german_word
-                tot_conditional_prob += translation_probs.get((german_word,english_word), 0.0)
-            assert abs(tot_conditional_prob - 1.0) < 0.000000000001, 'Tot conditional probability != 1 !!!'
-            print("Most likely word for ", english_word, " is the german word ", max_prob_word, " with translation probability ", max_prob)
-        """
-
         print("No. of german words (stems) : " + str(len(self.german_vocab)))
         print("No. of english words (stems) :" + str(len(self.english_vocab)))
 
@@ -178,18 +151,15 @@ class EM_model1(Model1):
     #may have to take care of unicode stuff. Also, you should probably split the compounded nouns apart.
     #may have to append null to each sentence
     def preprocess(self, line):
-        [german, english] = line.strip().lower().split('|||')
-        for word in german.split(' '):
-            german_stemmed_word = self.german_stemmer.stem(word.strip().decode('utf-8')).encode('utf-8')
-            self.german_vocab.add(german_stemmed_word)
-        for word in english.split(' '):
-            english_stemmed_word = self.english_stemmer.stem(word.strip().decode('utf-8')).encode('utf-8')
-            self.english_vocab.add(english_stemmed_word)
-            for word in german.split(' '):
-                german_stemmed_word = self.german_stemmer.stem(word.strip().decode('utf-8')).encode('utf-8')
-                key = (german_stemmed_word, english_stemmed_word)
+        (german, english) = self.get_parallel_instance(line)
+        for word in german:
+            self.german_vocab.add(word)
+        for e_j in english:
+            self.english_vocab.add(e_j)
+            for g_i in german:
+                key = (g_i, e_j)
                 if not self.translation_probs.has_key(key):
-                    self.totals[english_stemmed_word] = self.totals.get(english_stemmed_word, 0) + 1.0
+                    self.totals[e_j] = self.totals.get(e_j, 0) + 1.0
                 self.translation_probs[key] = 1.0
 
     def normalize(self):
@@ -210,14 +180,12 @@ class EM_model1(Model1):
 
 
     def estimate_params(self):
-
-        iter_count = 0
-
         """
         EM algorithm for estimating the translation probablities
         See https://www.cl.cam.ac.uk/teaching/1011/L102/clark-lecture3.pdf for a good tutorial
         """
 
+        iter_count = 0
         while(True):#until convergence or max_iters
             print("Iteration " + str(iter_count + 1))
             iter_count += 1
@@ -272,7 +240,6 @@ class EM_model1(Model1):
         print("Num of conditional probabilities actually stored: ", len(self.translation_probs.keys()))
         print("Num of counts actually stored: ", len(self.counts.keys()))
         print("Num of totals actually stored: ", len(self.totals.keys()))
-
         self.sanity_check()
 
 
@@ -302,3 +269,67 @@ class EM_model1(Model1):
                 print("Most likely word for ", english_word, " is the german word ", max_prob_word, " with translation probability ", max_prob)
         print("Sanity check passed!")
 
+class DE_Compound(Model1):
+
+    def __init__(self,parameter_file):#,compounds_file="data/compound.dict"):
+        super(DE_Compound,self).__init__(parameter_file)
+        self.compounds = pickle.load(open("data/compound.dict",'rb'))#compounds_file)
+
+    def get_parallel_instance(self, corpus_line):
+        [german, english] = corpus_line.strip().split(' ||| ')
+        return ([(i,self.get_german_stem(w).lower()) 
+                 for (i,word) in enumerate(german.split(' ')) 
+                 for w in ([word] if word not in self.compounds 
+                           else self.compounds[word])],
+                [(i,self.get_english_stem(word).lower())
+                 for (i,word) in enumerate(english.split(' '))])
+
+    def get_alignment(self, german, english):
+        """
+        Returns model1 alignment for a DE/EN parallel sentence pair.
+        For each german word, identifies the best english word (or NULL) to align to
+        """
+        english.append((len(english),self.null_val))
+        alignment = []
+        for (i, g_i) in german: 
+            best = -1
+            bestscore = 0
+            for (j, e_j) in english:
+                val = self.get_prior()*self.get_translation_prob(g_i,e_j)
+                if best==-1 or val>bestscore:
+                    bestscore = val
+                    best = j
+            if best < len(english)-1:
+                yield (i,best) # don't yield anything for NULL alignment
+
+class EM_DE_Compound(DE_Compound,EM_model1):
+
+    def __init__(self, input_file, output_file, n_iterations):
+
+        self.MAX_ITERS = n_iterations
+        self.INPUT_FILE = input_file
+        self.OUTPUT_FILE = output_file
+
+        self.compounds = pickle.load(open("data/compound.dict",'rb'))#compounds_file)
+
+        ip_line_counter = 0
+        # May have to take care of last line being empty
+        with open(self.INPUT_FILE) as ip:
+            print("Starting to process corpus")
+            for line in ip:
+                self.preprocess(line)
+                ip_line_counter += 1
+                if (ip_line_counter % 1000 == 0):
+                    print("Processed %d lines" % (ip_line_counter))
+
+        self.normalize()
+        print("No. of german words (stems) : " + str(len(self.german_vocab)))
+        print("No. of english words (stems) :" + str(len(self.english_vocab)))
+
+    def get_parallel_instance(self, corpus_line):
+        """
+        Removes the DE_Compound word indices for easier EM estimation
+        """
+        (german,english) = \
+                 super(EM_DE_Compound,self).get_parallel_instance(corpus_line)
+        return ([w for (i,w) in german],[w for (i,w) in english])
