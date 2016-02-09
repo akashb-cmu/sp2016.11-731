@@ -11,7 +11,7 @@ optparser.add_option("-m", "--translation_model", dest="translation_model", defa
 
 bitext = [line for line in open(opts.bitext,'r')][:opts.num_sents]
 
-model = POS_decoder(opts.translation_model)
+model = DiagonalAligner(opts.translation_model)
 
 for line in bitext:
   (f,e) = model.get_parallel_instance(line)

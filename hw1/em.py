@@ -123,6 +123,32 @@ class POS_decoder(Model1):
             if best >= 0:
                 yield (i,best) # don't yield anything for NULL alignment
 
+class DiagonalAligner(POS_decoder):
+	""" Adds a diagonal prior to the POS prior. Uses Model 1 alignment """
+	DIAG_WEIGHT = .7
+
+    def __init__(self, parameter_file):
+        super(DiagonalAligner,self).__init__(parameter_file)
+        self.tagger = PosTagger()
+
+    def get_prior(self, **features):
+        """
+		2 priors:
+			* POS tags 1+TUNE_POS_WEIGHT if the POS tags are aligned else 1
+			* diagonal aligner 
+        """
+	
+		pos_prior = 1+self.TUNE_POS_WEIGHT*(
+            features.get("tag_german",self.null_val)==features.get("tag_english",self.null_val))
+
+		de_idx = 1.0*features.get("position_german", self.null_val)
+		de_len = 1.0*features.get("length_german", self.null_val)
+		en_idx = 1.0*features.get("position_english", self.null_val)
+		en_len = 1.0*features.get("length_english", self.null_val)
+
+		diag_prior = (1 - abs(de_idx/de_len - en_idx/en_len)) * self.DIAG_WEIGHT
+		prior = pos_prior + diag_prior
+
 class EM_model1(Model1):
 
     def __init__(self, input_file, output_file, n_iterations):
