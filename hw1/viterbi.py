@@ -1,7 +1,10 @@
 #!/usr/bin/env python
 import optparse
 import sys
-from em import *
+import em
+
+#The model to use for decoding
+DECODER = "DE_Compound_POS_decoder"
 
 optparser = optparse.OptionParser()
 optparser.add_option("-b", "--bitext", dest="bitext", default="data/dev-test-train.de-en", help="Parallel corpus (default data/dev-test-train.de-en)")
@@ -11,7 +14,7 @@ optparser.add_option("-m", "--translation_model", dest="translation_model", defa
 
 bitext = [line for line in open(opts.bitext,'r')][:opts.num_sents]
 
-model = POS_decoder(opts.translation_model)
+model = getattr(em,DECODER)(opts.translation_model)
 
 for line in bitext:
   (f,e) = model.get_parallel_instance(line)

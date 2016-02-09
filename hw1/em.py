@@ -69,29 +69,72 @@ class Model1(object):
     def get_alignment(self, german, english):
         """
         Returns model1 alignment for a DE/EN parallel sentence pair.
-        For each german word, identifies the best english word (or NULL) to align to
+        For each german word, identifies 
+        the best english word (or NULL) to align to
         """
         english.append(self.null_val)
         alignment = []
         for (i, g_i) in enumerate(german): 
-            gs_i = self.get_german_stem(g_i)
             best = -1
             bestscore = 0
             for (j, e_j) in enumerate(english):
-                es_j = self.get_english_stem(e_j)
-                val = self.get_prior()*self.get_translation_prob(gs_i,es_j)
+                val = self.get_prior()*self.get_translation_prob(g_i,e_j)
                 if best==-1 or val>bestscore:
                     bestscore = val
                     best = j
             if best < len(english)-1:
                 yield (i,best) # don't yield anything for NULL alignment
 
+class Bidirectional_decoder(Model1):
+    def __init__(self,e_g_parameter_file,g_e_parameter_file="german_to_english_iter74.model"):
+        super(Bidirectional_decoder,self).__init__(e_g_parameter_file)
+        self.g_e_translation_probs = pickle.load(open(g_e_parameter_file,'rb'))
+
+    def get_g_e_translation_prob(self, german_stem, english_stem):
+        return self.g_e_translation_probs.get((german_stem,english_stem),0.0)
+
+    def get_g_e_alignment(self, german, english):
+        """
+        Returns model1 alignment for a DE/EN parallel sentence pair.
+        For each english word, identifies 
+        the best german word (or NULL) to align to
+        """
+        german.append(self.null_val)
+        alignment = []
+        for (j, e_j) in enumerate(english):
+            best = -1
+            bestscore = 0
+            for (i, g_i) in enumerate(german): 
+                val = self.get_prior()*self.get_g_e_translation_prob(g_i,e_j)
+                if best==-1 or val>bestscore:
+                    bestscore = val
+                    best = j
+            if best < len(german)-1:
+                yield (i,best) # don't yield anything for NULL alignment
+
+    def get_alignment(self, german, english):
+        """
+        Returns model1 alignment for a DE/EN parallel sentence pair.
+        Includes alignment decisions made in either direction by model1.
+        """
+        g_e_alignment = set(self.get_g_e_alignment(german, english))
+        for el in super(Bidirectional_decoder, self).get_alignment(german,english):
+            if el not in g_e_alignment: # only yield each alignment once
+                yield el
+        for el in g_e_alignment:
+            yield el        
+
 class POS_decoder(Model1):
-    TUNE_POS_WEIGHT = .65
+    TUNE_POS_WEIGHT = 10
 
     def __init__(self, parameter_file):
         super(POS_decoder,self).__init__(parameter_file)
         self.tagger = PosTagger()
+
+    def get_parallel_instance(self, corpus_line):
+        (german, english) = corpus_line.strip().split(' ||| ')
+        return ([word for word in german.split(" ")],
+                [word for word in english.split(" ")])
 
     def get_prior(self, **features):
         """
@@ -109,19 +152,64 @@ class POS_decoder(Model1):
         alignment = []
         gtags = self.tagger.parse(german,"de")
         etags = self.tagger.parse(english,"en")
+        (german,english) = ([self.get_german_stem(word).lower() for word in german],
+                            [self.get_english_stem(word).lower() for word in english])
+        etags.append(self.null_val)
+        english.append(self.null_val)
         for (i, g_i) in enumerate(german): 
-            gs_i = self.get_german_stem(g_i)
             best = -1
-            bestscore = self.get_prior(tag_german=gtags[i])*self.get_translation_prob(gs_i,self.null_val)
+            bestscore = 0
             for (j, e_j) in enumerate(english):
-                es_j = self.get_english_stem(e_j)
                 val = self.get_prior(tag_german=gtags[i],tag_english=etags[j])*\
-                      self.get_translation_prob(gs_i,es_j)
+                      self.get_translation_prob(g_i,e_j)
                 if best==-1 or val>bestscore:
                     bestscore = val
                     best = j
-            if best >= 0:
+            if best < len(english)-1:
                 yield (i,best) # don't yield anything for NULL alignment
+
+class Bidirectional_POS_decoder(POS_decoder,Bidirectional_decoder):
+
+    def __init__(self,e_g_parameter_file,g_e_parameter_file="german_to_english_iter74.model"):
+        super(Bidirectional_POS_decoder,self).__init__(e_g_parameter_file)
+        self.g_e_translation_probs = pickle.load(open(g_e_parameter_file,'rb'))
+
+    def get_g_e_alignment(self, german, english):
+        """
+        Returns Model1 alignment for a DE/EN parallel sentence pair.
+        For each english word, identifies the best german word (or NULL) to align to
+        Applies a prior which assigns higher probability to alignments which preserve POS tags.
+        """
+        alignment = []
+        gtags = self.tagger.parse(german,"de")
+        etags = self.tagger.parse(english,"en")
+        (german, english) = ([self.get_german_stem(word).lower() for word in german],
+                             [self.get_english_stem(word).lower() for word in english])
+        gtags.append(self.null_val)
+        german.append(self.null_val)
+        for (j, e_j) in enumerate(english):
+            best = -1
+            bestscore = 0
+            for (i, g_i) in enumerate(german): 
+                val = self.get_prior(tag_german=gtags[i],tag_english=etags[j])*\
+                      self.get_translation_prob(g_i,e_j)
+                if best==-1 or val>bestscore:
+                    bestscore = val
+                    best = j
+            if best < len(german)-1:
+                yield (i,best) # don't yield anything for NULL alignment
+
+    def get_alignment(self, german, english):
+        """
+        Returns model1 alignment for a DE/EN parallel sentence pair.
+        Includes alignment decisions made in either direction by model1.
+        """
+        g_e_alignment = self.get_g_e_alignment(german, english)
+        for el in super(Bidirectional_POS_decoder, self).get_alignment(german,english):
+            if el not in g_e_alignment: # only yield each alignment once
+                yield el
+        for el in g_e_alignment:
+            yield el
 
 class EM_model1(Model1):
 
@@ -301,6 +389,59 @@ class DE_Compound(Model1):
                     best = j
             if best < len(english)-1:
                 yield (i,best) # don't yield anything for NULL alignment
+
+class DE_Compound_POS_decoder(POS_decoder,DE_Compound):
+    
+    def __init__(self, parameter_file):
+        super(DE_Compound_POS_decoder,self).__init__(parameter_file)
+        self.compounds = pickle.load(open("data/compound.dict",'rb'))#compounds_file)
+
+    def get_parallel_instance(self, corpus_line):
+        [german, english] = corpus_line.strip().split(' ||| ')
+        return ([word for word in german.split(' ')],
+                [word for word in english.split(' ')])
+
+    def stem(self, word):
+        return word[0]
+
+    def tag(self, word):
+        return word[1]
+
+    def get_alignment(self, german, english):
+        """
+        Returns Model1 alignment for a DE/EN parallel sentence pair.
+        For each german word, identifies the best english word (or NULL) to align to
+        Applies a prior which assigns higher probability to alignments which preserve POS tags.
+        """
+        alignment = []
+        (german,english) = self.tag_and_stem_compounds(german,english)
+        english.append((english[-1][0]+1,(self.null_val,self.null_val)))
+        for (i, g_i) in german: 
+            best = -1
+            bestscore = 0
+            for (j, e_j) in english:
+                val = self.get_prior(tag_german=self.tag(g_i),tag_english=self.tag(e_j))*\
+                      self.get_translation_prob(self.stem(g_i),self.stem(e_j))
+                if best==-1 or val>bestscore:
+                    bestscore = val
+                    best = j
+            if best < len(english)-1:
+                yield (i,best) # don't yield anything for NULL alignment
+
+    def tag_and_stem_compounds(self, german, english):
+        gtags = self.tagger.parse(german,"de")
+        etags = self.tagger.parse(english,"en")
+        
+        (german,english) = ([(i,(self.get_german_stem(self.stem(w)).lower(),self.tag(w)))
+                             for (i,word) in enumerate(zip(german,gtags))
+                             for w in ([(self.stem(word),self.tag(word))] 
+                                       if self.stem(word) not in self.compounds
+                                       else [(stem,self.tag(word)) 
+                                             for stem in self.compounds[self.stem(word)]])],
+                            [(i,(self.get_english_stem(self.stem(word)).lower(),self.tag(word))) 
+                             for (i,word) in enumerate(zip(english,etags))])
+
+        return (german, english)
 
 class EM_DE_Compound(DE_Compound,EM_model1):
 
