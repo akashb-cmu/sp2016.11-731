@@ -35,4 +35,4 @@ class PosTagger:
 		if sent_len != len(pos_sent):
 			raise ValueError("POS tagged sentence not same length:{:s}\n{:s}".format(sent, pos_sent))
 		
-		return pos_sent 	
+		return pos_sent
