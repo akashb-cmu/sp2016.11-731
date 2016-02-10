@@ -4,7 +4,7 @@ import sys
 import em
 
 #The model to use for decoding
-DECODER = "DE_Compound_POS_decoder"
+DECODER = "DiagonalAligner"
 
 optparser = optparse.OptionParser()
 optparser.add_option("-b", "--bitext", dest="bitext", default="data/dev-test-train.de-en", help="Parallel corpus (default data/dev-test-train.de-en)")

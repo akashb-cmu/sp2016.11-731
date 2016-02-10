@@ -142,7 +142,7 @@ class Bidirectional_decoder(Model1):
 
 
 class POS_decoder(Model1):
-    TUNE_POS_WEIGHT = 10
+    TUNE_POS_WEIGHT = 4
 
     def __init__(self, parameter_file):
         super(POS_decoder,self).__init__(parameter_file)
@@ -239,15 +239,12 @@ class Bidirectional_POS_decoder(POS_decoder,Bidirectional_decoder):
 
 
 
-class DiagonalAligner(Model1):
+class DiagonalAligner(POS_decoder):
     """ Adds a diagonal prior to the POS prior. Uses Model 1 alignment """
     DIAG_WEIGHT = .7
-    TUNE_POS_WEIGHT = .65
-
 
     def __init__(self, parameter_file):
         super(DiagonalAligner,self).__init__(parameter_file)
-        self.tagger = PosTagger()
 
 
     def get_prior(self, **features):
@@ -299,12 +296,6 @@ class DiagonalAligner(Model1):
                     best = j
             if best < len(english)-1:
                 yield (i,best) # don't yield anything for NULL alignment
-
-
-    def get_parallel_instance(self, corpus_line):
-        [german, english] = corpus_line.strip().split(' ||| ')
-        return ([word for word in german.split(' ')],
-                [word for word in english.split(' ')])
 
 
 
