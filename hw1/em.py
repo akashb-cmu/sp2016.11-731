@@ -5,6 +5,10 @@ import pickle
 import itertools
 import pdb
 from aligntools import PosTagger
+import math
+import heapq
+from collections import Counter
+from heapq import *
 
 class Model1(object):
     german_stemmer = SnowballStemmer("german")
@@ -306,7 +310,7 @@ class EM_model1(Model1):
     german_totals = {}
     english_totals = {}
 
-    RARE_THRESHOLD = 30
+    RARE_THRESHOLD = 50
 
     def __init__(self, input_file, output_file, n_iterations):
         self.MAX_ITERS = n_iterations
@@ -328,8 +332,8 @@ class EM_model1(Model1):
                 #        counts[stem] = Counter(german_stemmed_sentence)
                 #    else:
                 #        counts[stem].update(english_stemmed_sentence)        
-        enrares = set([word for word in counts if sum(counts[word].values())<self.RARE_THRESHOLD])
-        derares = set([word for word in counts if sum(counts[word].values())<self.RARE_THRESHOLD])
+        enrares = set([word for word in encounts if encounts[word]<self.RARE_THRESHOLD])
+        derares = set([word for word in decounts if decounts[word]<self.RARE_THRESHOLD])
         return (derares,enrares)
 
     def preprocess(self, direction):
@@ -703,6 +707,10 @@ class EM_DE_Compound(DE_Compound,EM_model1):
         self.OUTPUT_FILE = output_file
 
         self.compounds = pickle.load(open("data/compound.dict",'rb'))#compounds_file)
+        print("Accumulating word counts")
+        self.rare_tokens = (set(), set())
+        self.rare_tokens = self._find_rares()
+        print("Done identifying rare words")
 
 
     def get_parallel_instance(self, corpus_line):
@@ -712,6 +720,7 @@ class EM_DE_Compound(DE_Compound,EM_model1):
         (german,english) = \
             super(EM_DE_Compound,self).get_parallel_instance(corpus_line)
         return ([w for (i,w) in german],[w for (i,w) in english])
+
 
 class DiagonalCompoundDecoder(DiagonalAligner, DE_Compound_POS_decoder):
     """ Decoder that incorporates diagonal and POS priors
@@ -823,7 +832,8 @@ class BeamDecoder(DiagonalCompoundDecoder):
                         if best==-1 or val>bestscore:
                             bestscore = val
                             best = j
-
+                    score = 0 #Should not be zero. Implementation of this decoder is not done yet so this is just a
+                    #place holder
                     # Here we add the possible alignment to our consideration
                     # and throw out the lowest scoring alignment
                     if len(alignments)==self.BEAM_WIDTH:
