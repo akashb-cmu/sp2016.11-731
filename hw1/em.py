@@ -315,7 +315,7 @@ class EM_model1(Model1):
                 counts.update(english_stemmed_sentence)        
         return set([word for word in counts if counts[word]==1])
 
-    def self.get_parallel_instance(line):
+    def get_parallel_instance(self,line):
         [german_stemmed_sentence, english_stemmed_sentence] = super(EM_model1,self).get_parallel_instance(line)
         return (german_stemmed_sentence,
                 [self.rare_val if tok in self.rare_tokens else tok 
@@ -578,7 +578,7 @@ class DE_Compound(Model1):
     def get_parallel_instance(self, corpus_line):
         [german, english] = corpus_line.strip().split(' ||| ')
         return ([(i,self.get_german_stem(w).lower())
-                 for (i,word) in [(j,wt.strip("„")) 
+                 for (i,word) in [(j,(wt.strip("„") if "„" in wt else wt)) 
                                   for (j,wort) in enumerate(german.split(' '))
                                   for wt in ([wort] if wort=='-' else wort.split('-'))]
                  for w in ([word] if word not in self.compounds
@@ -655,16 +655,22 @@ class DE_Compound_POS_decoder(POS_decoder,DE_Compound):
     def tag_and_stem_compounds(self, german, english):
         gtags = self.tagger.parse(german,"de")
         etags = self.tagger.parse(english,"en")
-
+ 
         (german,english) = ([(i,(self.get_german_stem(self.stem(w)).lower(),self.tag(w)))
-                             for (i,word) in enumerate(zip(german,gtags))
+                             for (i,word) in [(j,((wt.strip("„") if wt[:3]=="„" else wt),
+                                                  self.tag(wort))) 
+                                              for (j,wort) in enumerate(zip(german,gtags))
+                                              for wt in ([self.stem(wort)] if self.stem(wort)=='-'
+                                                         else self.stem(wort).split('-'))]
                              for w in ([(self.stem(word),self.tag(word))]
                                        if self.stem(word) not in self.compounds
                                        else [(stem,self.tag(word))
                                              for stem in self.compounds[self.stem(word)]])],
                             [(i,(self.get_english_stem(self.stem(word)).lower(),self.tag(word)))
-                             for (i,word) in enumerate(zip(english,etags))])
-
+                             for (i,word) in [(j,(wt,self.tag(wort))) 
+                                              for (j,wort) in enumerate(zip(english,etags))
+                                              for wt in ([self.stem(wort)] if self.stem(wort)=='-'
+                                                         else self.stem(wort).split('-'))]])
         return (german, english)
 
 
