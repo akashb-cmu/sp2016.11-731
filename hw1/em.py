@@ -11,6 +11,7 @@ class Model1(object):
     english_stemmer = SnowballStemmer("english")
 
     null_val = ''.decode('utf-8').encode('utf-8')
+    rare_val = "__RARE_TOKEN_"
 
     #Both vocabularies have a null
     german_vocab = set([null_val])
@@ -32,7 +33,7 @@ class Model1(object):
     totals = {}
 
     def __init__(self, parameter_file):
-        self.translation_probs = pickle.load(open(parameter_file,'rb'))
+        (self.translation_probs,self.rare_tokens) = pickle.load(open(parameter_file,'rb'))
         self.INPUT_FILE = None
 
     def get_params(self):
@@ -134,7 +135,7 @@ class Bidirectional_decoder(Model1):
 
 
 class POS_decoder(Model1):
-    TUNE_POS_WEIGHT = 4
+    TUNE_POS_WEIGHT = 8
 
     def __init__(self, parameter_file):
         super(POS_decoder,self).__init__(parameter_file)
@@ -288,7 +289,7 @@ class DiagonalAligner(POS_decoder):
                     best = j
             if best < len(english)-1:
                 yield (i,best) # don't yield anything for NULL alignment
-
+ 
 class EM_model1(Model1):
 
     ENGLISH_TO_GERMAN = 1
@@ -304,6 +305,21 @@ class EM_model1(Model1):
         self.MAX_ITERS = n_iterations
         self.INPUT_FILE = input_file
         self.OUTPUT_FILE = output_file
+        self.rare_tokens = self._find_rares()
+
+    def _find_rares(self):
+        counts = Counter()
+        with open(self.INPUT_FILE) as ip:
+            for line in ip:
+                [german_stemmed_sentence, english_stemmed_sentence] = super(EM_model1,self).get_parallel_instance(line)
+                counts.update(english_stemmed_sentence)        
+        return set([word for word in counts if counts[word]==1])
+
+    def self.get_parallel_instance(line):
+        [german_stemmed_sentence, english_stemmed_sentence] = super(EM_model1,self).get_parallel_instance(line)
+        return (german_stemmed_sentence,
+                [self.rare_val if tok in self.rare_tokens else tok 
+                 for tok in english_stemmed_sentence])
 
     def preprocess(self, direction):
         assert direction == self.ENGLISH_TO_GERMAN or direction == self.GERMAN_TO_ENGLISH, "Invalid translation direction"
@@ -464,7 +480,7 @@ class EM_model1(Model1):
                 if direction == self.ENGLISH_TO_GERMAN:
                     print("Spot checking on 5% of english vocabulary before storing!")
                     self.sanity_check(direction, int(len(self.english_vocab) * 0.05))
-                    pickle.dump(self.english_to_german_translation_probs, model_dump)
+                    pickle.dump((self.english_to_german_translation_probs,self.rare_tokens), model_dump)
                     print("Storing english to german translation model after %d iterations" % (iter_count))
                 elif direction == self.GERMAN_TO_ENGLISH:
                     print("Spot checking on 5% of german vocabulary before storing!")
@@ -479,7 +495,7 @@ class EM_model1(Model1):
                 if direction == self.ENGLISH_TO_GERMAN:
                     print("Spot checking on 5% of english vocabulary before storing!")
                     self.sanity_check(direction, int(len(self.english_vocab) * 0.05))
-                    pickle.dump(self.english_to_german_translation_probs, model_dump)
+                    pickle.dump((self.english_to_german_translation_probs,self.rare_tokens), model_dump)
                     print("Storing english to german translation model after %d iterations" % (iter_count))
                 elif direction == self.GERMAN_TO_ENGLISH:
                     print("Spot checking on 5% of german vocabulary before storing!")
@@ -562,11 +578,14 @@ class DE_Compound(Model1):
     def get_parallel_instance(self, corpus_line):
         [german, english] = corpus_line.strip().split(' ||| ')
         return ([(i,self.get_german_stem(w).lower())
-                 for (i,word) in enumerate(german.split(' '))
+                 for (i,word) in [(j,wt.strip("„")) 
+                                  for (j,wort) in enumerate(german.split(' '))
+                                  for wt in ([wort] if wort=='-' else wort.split('-'))]
                  for w in ([word] if word not in self.compounds
                            else self.compounds[word])],
                 [(i,self.get_english_stem(word).lower())
-                 for (i,word) in enumerate(english.split(' '))])
+                 for (i,word) in [(j,wt) for (j,wort) in enumerate(english.split(' '))
+                                  for wt in ([wort] if wort=='-' else wort.split('-'))]])
 
 
     def get_alignment(self, german, english):
@@ -668,3 +687,43 @@ class EM_DE_Compound(DE_Compound,EM_model1):
         (german,english) = \
             super(EM_DE_Compound,self).get_parallel_instance(corpus_line)
         return ([w for (i,w) in german],[w for (i,w) in english])
+
+class DiagonalCompoundDecoder(DiagonalAligner, DE_Compound_POS_decoder):
+    """ Decoder that incorporates diagonal and POS priors
+        and breaks up German compound words """
+
+    def __init__(self, parameter_file):
+        super(DiagonalCompoundDecoder,self).__init__(parameter_file)
+        self.compounds = pickle.load(open("data/compound.dict",'rb'))#compounds_file)
+
+    def get_alignment(self, german, english):
+        """
+        Returns Model1 alignment for a DE/EN parallel sentence pair.
+        For each german word, identifies the best english word (or NULL) to align to
+        Applies a prior which assigns higher probability to alignments which preserve POS tags and are diagonally aligned
+        Breaks up German compound words
+        """
+        alignment = []
+        (german,english) = self.tag_and_stem_compounds(german,english)
+        english.append((english[-1][0]+1,(self.null_val,self.null_val)))
+
+        for (i, g_i) in german:
+            german_len = len(german)
+            best = -1
+            bestscore = 0
+            for (j, e_j) in english:
+                english_len = len(english)
+
+                if self.stem(e_j) == self.null_val: # handle null
+                    prior = 1.0
+                else:
+                    prior = self.get_prior(tag_german=self.tag(g_i),position_german=i,\
+                                           length_german=german_len,tag_english=self.tag(e_j),\
+                                           position_english=j,length_english=english_len)
+                val = prior * self.get_translation_prob(self.stem(g_i),self.stem(e_j))
+                if best==-1 or val>bestscore:
+                    bestscore = val
+                    best = j
+
+            if best < len(english)-1:
+                yield (i,best) # don't yield anything for NULL alignment
