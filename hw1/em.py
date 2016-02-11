@@ -50,8 +50,13 @@ class Model1(object):
 
     def get_parallel_instance(self, corpus_line):
         [german, english] = corpus_line.strip().split(' ||| ')
-        return ([self.get_german_stem(word).lower() for word in german.split(' ')],
+        german_stemmed_sentence,english_stemmed_sentence =\
+               ([self.get_german_stem(word).lower() for word in german.split(' ')],
                 [self.get_english_stem(word).lower() for word in english.split(' ')])
+        return ([self.rare_val if tok in self.rare_tokens[0] else tok
+                 for tok in german_stemmed_sentence],
+                [self.rare_val if tok in self.rare_tokens[1] else tok 
+                 for tok in english_stemmed_sentence])
 
     def get_counts(self, sent):
         """
@@ -135,7 +140,7 @@ class Bidirectional_decoder(Model1):
 
 
 class POS_decoder(Model1):
-    TUNE_POS_WEIGHT = 8
+    TUNE_POS_WEIGHT = 6
 
     def __init__(self, parameter_file):
         super(POS_decoder,self).__init__(parameter_file)
@@ -234,7 +239,7 @@ class Bidirectional_POS_decoder(POS_decoder,Bidirectional_decoder):
 
 class DiagonalAligner(POS_decoder):
     """ Adds a diagonal prior to the POS prior. Uses Model 1 alignment """
-    DIAG_WEIGHT = .7
+    DIAG_WEIGHT = 0.5
 
     def __init__(self, parameter_file):
         super(DiagonalAligner,self).__init__(parameter_file)
@@ -254,7 +259,7 @@ class DiagonalAligner(POS_decoder):
         en_len = float(features.get("length_english", self.null_val))
 
         diag_prior = (1 - abs(de_idx/de_len - en_idx/en_len)) * self.DIAG_WEIGHT
-        return pos_prior + diag_prior
+        return pos_prior * diag_prior
 
 
     def get_alignment(self, german, english):
@@ -301,25 +306,31 @@ class EM_model1(Model1):
     german_totals = {}
     english_totals = {}
 
+    RARE_THRESHOLD = 30
+
     def __init__(self, input_file, output_file, n_iterations):
         self.MAX_ITERS = n_iterations
         self.INPUT_FILE = input_file
         self.OUTPUT_FILE = output_file
+        self.rare_tokens = (set(),set())
         self.rare_tokens = self._find_rares()
 
     def _find_rares(self):
-        counts = Counter()
+        encounts = Counter()#{}
+        decounts = Counter()
         with open(self.INPUT_FILE) as ip:
             for line in ip:
                 [german_stemmed_sentence, english_stemmed_sentence] = super(EM_model1,self).get_parallel_instance(line)
-                counts.update(english_stemmed_sentence)        
-        return set([word for word in counts if counts[word]==1])
-
-    def get_parallel_instance(self,line):
-        [german_stemmed_sentence, english_stemmed_sentence] = super(EM_model1,self).get_parallel_instance(line)
-        return (german_stemmed_sentence,
-                [self.rare_val if tok in self.rare_tokens else tok 
-                 for tok in english_stemmed_sentence])
+                decounts.update(german_stemmed_sentence)
+                encounts.update(english_stemmed_sentence)
+                #for stem in english_stemmed_sentence:
+                #    if stem not in counts:
+                #        counts[stem] = Counter(german_stemmed_sentence)
+                #    else:
+                #        counts[stem].update(english_stemmed_sentence)        
+        enrares = set([word for word in counts if sum(counts[word].values())<self.RARE_THRESHOLD])
+        derares = set([word for word in counts if sum(counts[word].values())<self.RARE_THRESHOLD])
+        return (derares,enrares)
 
     def preprocess(self, direction):
         assert direction == self.ENGLISH_TO_GERMAN or direction == self.GERMAN_TO_ENGLISH, "Invalid translation direction"
@@ -574,10 +585,10 @@ class DE_Compound(Model1):
         super(DE_Compound,self).__init__(parameter_file)
         self.compounds = pickle.load(open("data/compound.dict",'rb'))#compounds_file)
 
-
     def get_parallel_instance(self, corpus_line):
         [german, english] = corpus_line.strip().split(' ||| ')
-        return ([(i,self.get_german_stem(w).lower())
+        german_stemmed_sentence,english_stemmed_sentence =\
+                ([(i,self.get_german_stem(w).lower())
                  for (i,word) in [(j,(wt.strip("„") if "„" in wt else wt)) 
                                   for (j,wort) in enumerate(german.split(' '))
                                   for wt in ([wort] if wort=='-' else wort.split('-'))]
@@ -586,7 +597,10 @@ class DE_Compound(Model1):
                 [(i,self.get_english_stem(word).lower())
                  for (i,word) in [(j,wt) for (j,wort) in enumerate(english.split(' '))
                                   for wt in ([wort] if wort=='-' else wort.split('-'))]])
-
+        return ([(i,self.rare_val) if word in self.rare_tokens[0] else (i,word)
+                 for (i,word) in german_stemmed_sentence],
+                [(i,self.rare_val) if word in self.rare_tokens[1] else (i,word) 
+                 for (i,word) in english_stemmed_sentence])
 
     def get_alignment(self, german, english):
         """
@@ -671,8 +685,13 @@ class DE_Compound_POS_decoder(POS_decoder,DE_Compound):
                                               for (j,wort) in enumerate(zip(english,etags))
                                               for wt in ([self.stem(wort)] if self.stem(wort)=='-'
                                                          else self.stem(wort).split('-'))]])
-        return (german, english)
 
+        return ([(i,(self.rare_val,self.tag(word))) 
+                 if self.stem(word) in self.rare_tokens[0] else (i,word)
+                 for (i,word) in german],
+                [(i,(self.rare_val,self.tag(word))) 
+                 if self.stem(word) in self.rare_tokens[1] else (i,word) 
+                 for (i,word) in english])
 
 
 class EM_DE_Compound(DE_Compound,EM_model1):
@@ -733,3 +752,97 @@ class DiagonalCompoundDecoder(DiagonalAligner, DE_Compound_POS_decoder):
 
             if best < len(english)-1:
                 yield (i,best) # don't yield anything for NULL alignment
+
+class BeamDecoder(DiagonalCompoundDecoder):
+    """ 
+    Decoder that incorporates diagonal and POS priors
+    and breaks up German compound words. 
+    Runs a beam search based approach to dynamically build up the alignment
+    """
+    TUNE_JUMP_WEIGHT = 1
+    BEAM_WIDTH = 10
+
+    def get_prior(self, **features):
+        """ 
+        2 priors:
+        * POS tags 1+TUNE_POS_WEIGHT if the POS tags are aligned else 1
+        * diagonal prior
+        """
+        pos_prior = 1+self.TUNE_POS_WEIGHT*(
+            features.get("tag_german",self.null_val)==features.get("tag_english",self.null_val))
+
+        de_idx = float(features.get("position_german", self.null_val))
+        de_len = float(features.get("length_german", self.null_val))
+        en_idx = float(features.get("position_english", self.null_val))
+        en_len = float(features.get("length_english", self.null_val))
+
+        diag_prior = (1 - abs(de_idx/de_len - en_idx/en_len)) * self.DIAG_WEIGHT
+
+        if features.get("last_align"):
+            jump_prior = max(0,(3 - math.abs(en_idx-features.get("last_align")[1])))\
+                         *self.TUNE_JUMP_WEIGHT + 0.1
+        return pos_prior * diag_prior * jump_prior
+
+    def alignment(self, al):
+        return al[0]
+
+    def score(self, al):
+        return al[1]
+
+    def get_alignment(self, german, english):
+        """
+        Returns Model1 alignment for a DE/EN parallel sentence pair.
+        For each german word, identifies the best english word (or NULL) to align to
+        Applies a prior which assigns higher probability to alignments which preserve POS tags and are diagonally aligned
+        Breaks up German compound words
+        """
+        old_alignments = [[[],0]]
+        
+        (german,english) = self.tag_and_stem_compounds(german,english)
+        english.append((english[-1][0]+1,(self.null_val,self.null_val)))
+
+        # Pick a word in each language and consider adding that to the alignments under consideration
+        for (i, g_i) in german:
+            german_len = len(german)
+            for (j, e_j) in english:
+                english_len = len(english)
+
+                for alignment in old_alignments:
+                    if self.stem(e_j) == self.null_val: # handle null
+                        prior = 1.0
+                    else:
+                        try:
+                            last = self.alignment(alignment)[-1]
+                        except:
+                            last = None
+                        prior = self.get_prior(tag_german=self.tag(g_i),position_german=i,\
+                                               length_german=german_len,tag_english=self.tag(e_j),\
+                                               position_english=j,length_english=english_len,
+                                               last_align=last)
+                        val = prior * self.get_translation_prob(self.stem(g_i),self.stem(e_j))
+                        if best==-1 or val>bestscore:
+                            bestscore = val
+                            best = j
+
+                    # Here we add the possible alignment to our consideration
+                    # and throw out the lowest scoring alignment
+                    if len(alignments)==self.BEAM_WIDTH:
+                        if j < len(english)-1:
+                            heappushpop(alignments,[self.alignment(alignment)+[(i,j)],
+                                                    self.score(alignment)+score]) 
+                        else: # only adjust score for NULL alignment
+                            heappushpop(alignments,[self.alignment(alignment),
+                                                    self.score(alignment)+score])
+                    else:
+                        if j < len(english)-1:
+                            heappush(alignments,[self.alignment(alignment)+[(i,j)],
+                                                 self.score(alignment)+score])
+                        else:
+                            heappush(alignments,[self.alignment(alignment),
+                                                 self.score(alignment)+score])
+
+            old_alignments = alignments
+            alignments = []
+
+        # Ultimately, we return the highest scoring alignment
+        return alignments.nlargest(1,alignments,key=lambda(x):self.score(x))
