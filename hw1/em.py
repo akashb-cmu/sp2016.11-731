@@ -55,8 +55,6 @@ class Model1(object):
     def get_translation_prob(self, german_stem, english_stem):
         if german_stem==self.rare_val and english_stem==self.rare_val:
             prior = 2
-        elif english_stem[:min(3,len(german_stem))]==german_stem[:min(3,len(english_stem))]:
-            prior = 1.25
         else:
             prior = 1
         return prior*self.translation_probs.get((german_stem,english_stem),0.0)
@@ -252,7 +250,7 @@ class Bidirectional_POS_decoder(POS_decoder,Bidirectional_decoder):
 
 class DiagonalAligner(POS_decoder):
     """ Adds a diagonal prior to the POS prior. Uses Model 1 alignment """
-    DIAG_WEIGHT = 0.5
+    DIAG_WEIGHT = 0.25
 
     def __init__(self, parameter_file):
         super(DiagonalAligner,self).__init__(parameter_file)
@@ -782,6 +780,9 @@ class BeamDecoder(DiagonalCompoundDecoder):
     BEAM_WIDTH = 3
 
     def get_prior(self, **features):
+        wort = features.get("word_german",self.null_val)
+        word = features.get("word_english",self.null_val)
+        ortho_prior = 1+.1*(word[:min(3,len(wort))].lower()==wort[:min(3,len(word))].lower())
 
         pos_prior = 1+self.TUNE_POS_WEIGHT*(
            features.get("tag_german",self.null_val)==features.get("tag_english",self.null_val))
@@ -803,7 +804,7 @@ class BeamDecoder(DiagonalCompoundDecoder):
             jump_prior = 1
         duplicate_penalty = self.TUNE_ALREADY_ALIGNED if en_idx in features.get("en_aligned",[]) \
                             else 1
-        return pos_prior * diag_prior * jump_prior * duplicate_penalty
+        return ortho_prior * pos_prior * diag_prior * jump_prior * duplicate_penalty
 
     def alignment(self, al):
         return al[0]
@@ -818,6 +819,8 @@ class BeamDecoder(DiagonalCompoundDecoder):
         Applies a prior which assigns higher probability to alignments which preserve POS tags and are diagonally aligned
         Breaks up German compound words
         """
+        german_words = german
+        english_words = english+[self.null_val]
         alignments = [[[],0]]
         (german,english) = self.tag_and_stem_compounds(german,english)
         english.append((english[-1][0]+1,(self.null_val,self.null_val)))
@@ -841,7 +844,8 @@ class BeamDecoder(DiagonalCompoundDecoder):
                                            length_german=german_len,tag_english=self.tag(e_j),\
                                            position_english=j,length_english=english_len,
                                            last_align=last,stem_german=self.stem(g_i),
-                                           stem_english=self.stem(e_j),
+                                           stem_english=self.stem(e_j),word_german=german_words[i],
+                                           word_english=english_words[j],
                                            en_aligned=set([l for (k,l) in 
                                                            self.alignment(alignment)]))
 
