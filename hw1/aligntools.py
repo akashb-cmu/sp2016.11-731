@@ -4,6 +4,23 @@ import string
 
 class PosTagger:
 
+        posclasses = {'CC':'V', 'CD':'N', 'DT':'IN', 'EX':'IN', 'FW':'N', 'IN':'IN', 
+                      'JJ':'J', 'JJR':'J', 'JJS':'J', 'LS':'.', 'MD':'V', 
+                      'NN':'N', 'NNS':'N', 'NNP':'N', 'NNPS':'N', 'PDT':'IN', 
+                      'POS':'IN', 'PRP':'N', 'PRP$':'N', 'RB':'J', 'RBR':'J', 
+                      'RBS':'J', 'RP':'IN', 'SYM':'.', 'TO':'P', 'UH':'V', 
+                      'VB':'V', 'VBD':'V', 'VBG':'V', 'VBN':'V', 'VBP':'V', 
+                      'VBZ':'V', 'WDT':'W', 'WP':'W', 'WP$':'W', 'WRB':'W',
+                      '!':'.', '"':'.', '#':'.', '$':'.', '%':'.', '&':'.',
+                      '\'':'.', '(':'.', ')':'.', '*':'.', '+':'.', ',':'.',
+                      '-':'.', '.':'.', '/':'.', ':':'.', ';':'.', '<':'.', 
+                      '=':'.', '>':'.', '?':'.', '@':'.', '[':'.', '\\':'.',
+                      ']':'.', '^':'.', '_':'.', '`':'.', '{':'.', '|':'.',
+                      '}':'.','~':'.'}
+
+        def get_POS_class(self, pos):
+                return self.posclasses.get(pos,pos)
+
 	def parse(self, sent, lang):
 		""" Tag a specific sentence
 			Args:
@@ -12,7 +29,7 @@ class PosTagger:
 		
 		sent_len = len(sent)
 
-		penn_tags = ['CC', 'CD', 'DT', 'EX', 'FW', 'IN', 'JJ', 'JJR', 'JJS', 'LS', 'MD', 'NN', 'NNS', 'NNP', 'NNPS', 'PDT', 'POS' 'PRP', 'PRP$', 'RB', 'RBR', 'RBS', 'RP', 'SYM', 'TO', 'UH', 'VB', 'VBD', 'VBG', 'VBN', 'VBP', 'VBZ', 'WDT', 'WP', 'WP$', 'WRB'] + \
+		penn_tags = ['CC', 'CD', 'DT', 'EX', 'FW', 'IN', 'JJ', 'JJR', 'JJS', 'LS', 'MD', 'NN', 'NNS', 'NNP', 'NNPS', 'PDT', 'POS', 'PRP', 'PRP$', 'RB', 'RBR', 'RBS', 'RP', 'SYM', 'TO', 'UH', 'VB', 'VBD', 'VBG', 'VBN', 'VBP', 'VBZ', 'WDT', 'WP', 'WP$', 'WRB'] + \
 			[c for c in string.punctuation]
 		pos_sent = []
 		sent_with_pos = []
