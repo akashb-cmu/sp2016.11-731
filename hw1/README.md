@@ -1,10 +1,8 @@
 # Run
 The main Python program to run the alignment is `viterbi.py`. A basic example:
-
 ```
-python viterbi.py -m <TRANSLATION_MODEL_FILE> > output.txt
+python viterbi.py -m TRANSLATION_MODEL_FILE > output.txt
 ```
-
 `TRANSLATION_MODEL_FILE` is a pickled dictionary matching German vocabulary to English vocabulary with probability weights.
 
 Run `python viterbi.py -h` for more options.
