@@ -7,6 +7,26 @@ python viterbi.py -m TRANSLATION_MODEL_FILE > output.txt
 
 Run `python viterbi.py -h` for more options.
 
+How to replicate best results:
+Generate model 1 parameters:
+
+In run_em.py:
+
+Set the name of your model file using the variable OUTPUT_FILE. eg. OUTPUT_FILE = "./models/english_to_german.model"
+Set the direction of parameters.
+Eg.
+
+Decomp_model = EM_DE_Compound(INPUT_FILE, OUTPUT_FILE, MAX_ITERS)
+Decomp_model.estimate_params(EM_model1.ENGLISH_TO_GERMAN, 2)
+
+Now execute:
+python run_em.py
+
+To get alignments:
+
+python viterbi.py -n 150 -m english_to_german.model > output.txt;
+
+
 # Algorithms
 ### EM
 This forms the base of the model and gets us down to an AER score ~0.42. Words are stemmed using the nltk snowball stemmer to reduce the vocabulary size and ensure we don't estimate different parameters for different inflectional/equivalent forms of the same word. To go beyond this on the strength of parameters alone, we replace rare words (which occur < 50 times in the dataset) with a rare token. This helps us avoid a version of the label bias problem, where rare words co-occur with very few other words and the overall conditional probability mass is concentrated much more with these, as compared to more prevalent words where the probability mass is more spread out. This also helps with garbage collection of certain such rare tokens. Rare tokens account for < 0.1% of tokens and 10-20% of types. We have also successfully tried de-compounding words in german. In our experience, these restrictions on the vocabularies greatly effect the number and quality of parameters estimated by EM. While we didn't individually study the effect of this in isolation, it does behave as a force multiplier behind our other priors. 
