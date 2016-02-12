@@ -51,6 +51,8 @@ class Model1(object):
     def get_translation_prob(self, german_stem, english_stem):
         if german_stem==self.rare_val and english_stem==self.rare_val:
             prior = 2
+        elif english_stem[:min(3,len(german_stem))]==german_stem[:min(3,len(english_stem))]:
+            prior = 1.25
         else:
             prior = 1
         return prior*self.translation_probs.get((german_stem,english_stem),0.0)
@@ -828,7 +830,8 @@ class BeamDecoder(DiagonalCompoundDecoder):
                     prior = self.get_prior(tag_german=self.tag(g_i),position_german=i,\
                                            length_german=german_len,tag_english=self.tag(e_j),\
                                            position_english=j,length_english=english_len,
-                                           last_align=last,
+                                           last_align=last,stem_german=self.stem(g_i),
+                                           stem_english=self.stem(e_j),
                                            en_aligned=set([l for (k,l) in 
                                                            self.alignment(alignment)]))
 
