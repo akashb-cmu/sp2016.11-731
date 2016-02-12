@@ -1,3 +1,20 @@
+# Run
+The main Python program to run the alignment is viterbi.py. A basic example:
+python viterbi.py -m <TRANSLATION_MODEL_FILE> > output.txt
+
+TRANSLATION_MODEL_FILE is a pickled dictionary matching German vocabulary to English vocabulary with probability weights.
+
+Run python viterbi.py -h for more options.
+
+# Algorithms
+## Priors
+### POS prior
+We multiplied our translation table probabilities by a prior distribution based on POS tag matches. This prior probability was a delta functionreturning 1 if the POS tag matched, 0 otherwise. We then weighted this result and added 1.
+
+### Diagonal prior
+We calculated the distance in position of the English and German words proportional to the lengths of both sentences and used this as another prior distribution. We weighted this "diagonal prior" and multiplied it by the POS prior and translation probability.
+
+# Original documentation
 There are three Python programs here (`-h` for usage):
 
  - `./align` aligns words using Dice's coefficient.

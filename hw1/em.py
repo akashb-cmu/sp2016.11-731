@@ -6,6 +6,10 @@ import itertools
 import pdb
 import heapq
 from aligntools import PosTagger
+import math
+import heapq
+from collections import Counter
+from heapq import *
 
 POS_VERBS = set(['VB', 'VBD', 'VBG', 'VBN', 'VBP', 'VBZ'])
 
@@ -315,7 +319,7 @@ class EM_model1(Model1):
     german_totals = {}
     english_totals = {}
 
-    RARE_THRESHOLD = 30
+    RARE_THRESHOLD = 50
 
     def __init__(self, input_file, output_file, n_iterations):
         self.MAX_ITERS = n_iterations
@@ -712,6 +716,10 @@ class EM_DE_Compound(DE_Compound,EM_model1):
         self.OUTPUT_FILE = output_file
 
         self.compounds = pickle.load(open("data/compound.dict",'rb'))#compounds_file)
+        print("Accumulating word counts")
+        self.rare_tokens = (set(), set())
+        self.rare_tokens = self._find_rares()
+        print("Done identifying rare words")
 
 
     def get_parallel_instance(self, corpus_line):
@@ -721,6 +729,7 @@ class EM_DE_Compound(DE_Compound,EM_model1):
         (german,english) = \
             super(EM_DE_Compound,self).get_parallel_instance(corpus_line)
         return ([w for (i,w) in german],[w for (i,w) in english])
+
 
 class DiagonalCompoundDecoder(DiagonalAligner, DE_Compound_POS_decoder):
     """ Decoder that incorporates diagonal and POS priors
@@ -823,6 +832,7 @@ class BeamDecoder(DiagonalCompoundDecoder):
                 english_len = len(english)
 
                 for alignment in old_alignments:
+
                     try:
                         last = self.alignment(alignment)[-1]
                     except:
