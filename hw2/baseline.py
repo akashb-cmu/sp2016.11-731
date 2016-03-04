@@ -1,4 +1,7 @@
 from utils import *
+#from nltk.stem.snowball import SnowballStemmer
+import kenlm
+
 """
 from gensim.models import Word2Vec as W2vec
 import numpy as np
@@ -9,17 +12,23 @@ from keras.layers import LSTM
 from keras.regularizers import l2
 from keras.optimizers import SGD
 """
-HYP_FILE = "./data/train-test.hyp1-hyp2-ref"
+HYP_FILE = "./data/train-test.hyp1-hyp2-ref_tok_lower"
 GOLD_FILE = "./data/train.gold"
-OUTPUT_FILE = "./output.pred"
+OUTPUT_FILE = "./output.txt"
 VEC_FILE = "./vecs/GoogleNews-vectors-negative300.bin"
 TRADEOFF_PARAM = 0.4# between 0 and 1 ---> closer to 0 means recall heavy, else, precision heavy
+#english_stemmer = SnowballStemmer("english")
 """
 TRAIN_SPLIT_RATIO = 0.85
 SENTENCE_EMBEDDING_LENGTH = 500
 """
 
+def get_english_stem(word):
+    global  english_stemmer
+    english_stemmer.stem(word.strip().decode('utf-8')).encode('utf-8')
+
 def get_word_count_dict(sentence):
+    #word_list = [get_english_stem(word) for word in sentence.split(" ")]
     word_list = sentence.split(" ")
     tot_len = len(word_list)
     wcount_dict = {}
@@ -105,6 +114,9 @@ split_index = int(len(labeled_instances) * TRAIN_SPLIT_RATIO)
 
 #[labeled_instances, unlabeled_instances, w2vec_model, word2index, index2word] = get_data_and_w2vec_dicts(HYP_FILE, GOLD_FILE, pretrained_w2vec)
 [labeled_instances, unlabeled_instances, word2index, index2word] = get_data_and_w2vec_dicts(HYP_FILE, GOLD_FILE)
+
+model = kenlm.LanguageModel('europarl_en_lm.klm')
+print(model.score('the european union'))
 
 with open(OUTPUT_FILE, 'w') as op_file:
     #METEOR baseline method
