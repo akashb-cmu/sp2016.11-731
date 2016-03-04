@@ -19,17 +19,17 @@ from keras.optimizers import SGD
 """
 HYP_FILE = "./data/train-test.hyp1-hyp2-ref_tok_lower"
 GOLD_FILE = "./data/train.gold"
-OUTPUT_FILE = "output.txt"
+OUTPUT_FILE = "./output.txt"
 VEC_FILE = "./vecs/GoogleNews-vectors-negative300.bin"
-ERRORS_FILE = "errors.txt"
+ERRORS_FILE = "./errors.txt"
 TRADEOFF_PARAM = 0.45# between 0 and 1 ---> closer to 0 means recall heavy, else, precision heavy
 #Best so far is 0.45
 LM_CONTEXT_SIZE = 5
-#FEATS = ['prec','rec','whm','lm_score', 'lda', 'len'] #prec, rec and whm cannot be toggled off
-FEATS = ['prec','rec','whm', 'len'] #prec, rec and whm cannot be toggled off
+#FEATS = ['prec','rec','whm','lm_score', 'lda', 'len_word', 'len_char] #prec, rec and whm cannot be toggled off
+FEATS = ['whm', 'len_word', 'len_char'] #prec, rec and whm cannot be toggled off
 TRAIN_SPLIT = 0.9
 EXTRA_FEAT_FILE = './ldafeatures.pickle'
-N_CROSS_VAL_FOLDS = 10
+
 
 
 #english_stemmer = SnowballStemmer("english")
@@ -165,13 +165,13 @@ def get_feat_vects(feats, parallel_instance, lda_feats, tradeoff_param=0.5 , lm_
             f_vect.append(pentagram_lm.score(parallel_instance[2]))
     if 'lda' in feats:
         f_vect.extend(lda_feats)
-    if 'len' in feats:
+    if 'len_word' in feats:
+        f_vect.extend([len(parallel_instance[0].split(" ")), len(parallel_instance[1].split(" ")), len(parallel_instance[2].split(" "))])
+    if 'len_char' in feats:
         f_vect.extend([len(parallel_instance[0]), len(parallel_instance[1]), len(parallel_instance[2])])
-        f_vect.extend([len(parallel_instance[0])/len(parallel_instance[2]), len(parallel_instance[1])/len(parallel_instance[2])])
     return(np.array(f_vect))
 
 def get_accuracy(predicted_labels, gold_labels):
-    assert len(predicted_labels) == len(gold_labels), "In get accuracy, lengths of labels don't match"
     match_count = 0
     for i in range(len(predicted_labels)):
         if predicted_labels[i] == gold_labels[i]:
@@ -184,11 +184,10 @@ def get_wrong_instances(predictions, gold_labels, instances, error_file):
     wrong_instances = []
     for index, pred in enumerate(predictions):
         if gold_labels[index] != pred:
-            wrong_instances.append((instances[index][0][0], instances[index][0][1], instances[index][0][2], predictions[index], gold_labels[index]))
+            wrong_instances.append((instances[index][0][0], instances[index][0][1], instances[index][0][2]))
     with open(error_file, 'w') as error_f:
-        for index, wrong_instance in enumerate(wrong_instances):
-            print("Predicted %d but actually %d\n"%(wrong_instance[3], wrong_instance[4]))
-            error_f.write(str(wrong_instance[0]) + '\n' + str(wrong_instance[1]) + '\n' + str(wrong_instance[2]) + '\n\n\n')
+        for wrong_instance in wrong_instances:
+            error_f.write(str(wrong_instance[0]) + '|||' + str(wrong_instance[1]) + '|||' + str(wrong_instance[2]) + '\n')
 
 
 
@@ -224,51 +223,37 @@ train_labels = []
 #test_feats = np.zeros((len(unlabeled_instances), 2*len(FEATS) + 1))
 test_feats = []
 
-def get_cross_val_split(fold_id, all_labeled_instances, all_labels, train_split):
-    n_test = int((1-train_split) * len(all_labeled_instances))
-    start_index = (fold_id - 1) * n_test
-    end_index = start_index + n_test
-    val_feats = all_labeled_instances[start_index: end_index]
-    val_labels = all_labels[start_index: end_index]
+with open(OUTPUT_FILE, 'w') as op_file:
+    #METEOR baseline method
+    print("Assembling data matrices")
+    for index, instance in enumerate(labeled_instances):
+        parallel_instance = instance[0]
+        label = instance[1]
+        #op_file.write(str(get_prediction(parallel_instance, TRADEOFF_PARAM)) + '\n')
+        #train_feats[index] = get_feat_vects(FEATS, parallel_instance, tradeoff_param=TRADEOFF_PARAM, lm_context=LM_CONTEXT_SIZE)
+        train_feats.append(get_feat_vects(FEATS, parallel_instance, labeled_lda_feats[index], tradeoff_param=TRADEOFF_PARAM, lm_context=LM_CONTEXT_SIZE))
+        #train_labels[index] = label
+        train_labels.append(label)
+    train_feats = np.array(train_feats)
+    train_labels = np.array(train_labels)
+    split_index = int(TRAIN_SPLIT * len(train_feats))
+    validation_feats = train_feats[split_index:]
+    validation_labels = train_labels[split_index:]
+    train_feats = train_feats[:split_index]
+    train_labels = train_labels[:split_index]
 
-    train_feats = np.concatenate((all_labeled_instances[0:start_index], all_labeled_instances[end_index:]))
-    train_labels = np.concatenate((all_labels[0:start_index], all_labels[end_index:]))
-    return(train_feats, train_labels, val_feats, val_labels)
+    print("Train dims:", train_feats.shape, train_labels.shape)
+    print("Val dims:", validation_feats.shape, validation_labels.shape)
 
+    for index,instance in enumerate(unlabeled_instances):
+        parallel_instance = instance
+        #op_file.write(str(get_prediction(parallel_instance, TRADEOFF_PARAM)) + '\n')
+        #test_feats[index] = get_feat_vects(FEATS, parallel_instance, tradeoff_param=TRADEOFF_PARAM, lm_context=LM_CONTEXT_SIZE)
+        test_feats.append(get_feat_vects(FEATS, parallel_instance, unlabeled_lda_feats[index], tradeoff_param=TRADEOFF_PARAM,
+                                         lm_context=LM_CONTEXT_SIZE))
 
-#SVM Method
-print("Assembling data matrices")
-for index, instance in enumerate(labeled_instances):
-    parallel_instance = instance[0]
-    label = instance[1]
-    #op_file.write(str(get_prediction(parallel_instance, TRADEOFF_PARAM)) + '\n')
-    #train_feats[index] = get_feat_vects(FEATS, parallel_instance, tradeoff_param=TRADEOFF_PARAM, lm_context=LM_CONTEXT_SIZE)
-    train_feats.append(get_feat_vects(FEATS, parallel_instance, labeled_lda_feats[index], tradeoff_param=TRADEOFF_PARAM, lm_context=LM_CONTEXT_SIZE))
-    #train_labels[index] = label
-    train_labels.append(label)
-
-for index, instance in enumerate(unlabeled_instances):
-    parallel_instance = instance
-    # op_file.write(str(get_prediction(parallel_instance, TRADEOFF_PARAM)) + '\n')
-    # test_feats[index] = get_feat_vects(FEATS, parallel_instance, tradeoff_param=TRADEOFF_PARAM, lm_context=LM_CONTEXT_SIZE)
-    test_feats.append(
-        get_feat_vects(FEATS, parallel_instance, unlabeled_lda_feats[index], tradeoff_param=TRADEOFF_PARAM,
-                       lm_context=LM_CONTEXT_SIZE))
-
-test_feats = np.array(test_feats)
-
-train_feats = np.array(train_feats)
-train_labels = np.array(train_labels)
-"""
-split_index = int(TRAIN_SPLIT * len(train_feats))
-validation_feats = train_feats[split_index:]
-validation_labels = train_labels[split_index:]
-train_feats = train_feats[:split_index]
-train_labels = train_labels[:split_index]
-"""
-for i in range(N_CROSS_VAL_FOLDS):
-    print("Fold %d"%(i))
-    [train_fold_feats, train_fold_labels, validation_feats, validation_labels] = get_cross_val_split(i+1, train_feats, train_labels, TRAIN_SPLIT)
+    test_feats = np.array(test_feats)
+    print("Test dims:", test_feats.shape)
 
     """
     # Logistic Regression:
@@ -276,38 +261,25 @@ for i in range(N_CROSS_VAL_FOLDS):
     model = model.fit(train_feats, train_labels)
     print(model.score(validation_feats, validation_labels))
     """
-    print(train_fold_feats.shape, train_fold_labels.shape)
-    print(validation_feats.shape, validation_labels.shape)
-    print(test_feats.shape)
 
     print("Training SVM")
 
     #svm_model = svm.SVC(decision_function_shape='ovo')
     svm_model = svm.SVC()
-    svm_model.fit(train_fold_feats, train_fold_labels)
-
-    preds = svm_model.predict(np.concatenate((train_fold_feats, validation_feats, test_feats)))
+    svm_model.fit(train_feats, train_labels)
+    preds = svm_model.predict(np.concatenate((train_feats, validation_feats, test_feats)))
     #print(get_accuracy(preds, validation_labels))
     #dec = svm_model.decision_function(validation_feats)
     #print(dec)
 
-    all_fold_labels = np.concatenate((train_fold_labels, validation_labels))
-    all_fold_labeled_instances = np.concatenate((train_fold_feats, validation_feats))
+    all_labels = np.concatenate((train_labels, validation_labels))
 
-    with open("fold" + str(i+1) + OUTPUT_FILE, 'w') as op_file:
-        for pred in preds:
-            op_file.write(str(pred) + '\n')
-        print("Finished writing output file with meteor method")
-    raw_input("Press enter to continue with next fold")
-
-    #print(len(all_fold_labels), len(all_fold_labeled_instances))
-
-    #print(get_accuracy(preds[:len(all_fold_labels)], all_fold_labels))
-
-    #get_wrong_instances(preds[:len(all_fold_labels)], all_fold_labels, all_fold_labeled_instances, "fold" + str(i+1) + ERRORS_FILE)
+    get_wrong_instances(preds[:len(all_labels)], all_labels, labeled_instances, ERRORS_FILE)
 
 
-
+    for pred in preds:
+        op_file.write(str(pred) + '\n')
+    print("Finished writing output file with meteor method")
 
 
 
