@@ -1,5 +1,5 @@
 11-731: Machine Translation
-Akash Bharadwaj and Keith Maki
+Akash Bharadwaj (akashb) and Keith Maki (kmaki)
 Homework 2: Automatic MT Evaluation
 March 4th, 2016
 
