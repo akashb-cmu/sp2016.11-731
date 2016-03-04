@@ -5,6 +5,7 @@ import nltk
 from sklearn.linear_model import LogisticRegression
 from sklearn import svm
 import pickle
+from nltk.corpus import stopwords
 
 """
 from gensim.models import Word2Vec as W2vec
@@ -20,13 +21,15 @@ HYP_FILE = "./data/train-test.hyp1-hyp2-ref_tok_lower"
 GOLD_FILE = "./data/train.gold"
 OUTPUT_FILE = "./output.txt"
 VEC_FILE = "./vecs/GoogleNews-vectors-negative300.bin"
+ERRORS_FILE = "./errors.txt"
 TRADEOFF_PARAM = 0.45# between 0 and 1 ---> closer to 0 means recall heavy, else, precision heavy
 #Best so far is 0.45
 LM_CONTEXT_SIZE = 5
-#FEATS = ['prec','rec','whm','lm_score'] #prec, rec and whm cannot be toggled off
-FEATS = ['prec','rec','whm'] #prec, rec and whm cannot be toggled off
+#FEATS = ['prec','rec','whm','lm_score', 'lda', 'len'] #prec, rec and whm cannot be toggled off
+FEATS = ['whm'] #prec, rec and whm cannot be toggled off
 TRAIN_SPLIT = 0.9
 EXTRA_FEAT_FILE = './ldafeatures.pickle'
+
 
 
 #english_stemmer = SnowballStemmer("english")
@@ -40,7 +43,14 @@ def get_english_stem(word):
     english_stemmer.stem(word.strip().decode('utf-8')).encode('utf-8')
 
 def get_word_count_dict(sentence):
+    stop = set(stopwords.words('english'))
     #word_list = [get_english_stem(word) for word in sentence.split(" ")]
+    """
+    if len(sentence.split()) >= 5:
+        word_list = [word for word in sentence.split(" ") if word.decode('utf8') not in stop]
+    else:
+        word_list = sentence.split(" ")
+    """
     word_list = sentence.split(" ")
     tot_len = len(word_list)
     wcount_dict = {}
@@ -67,6 +77,9 @@ def get_precision(hyp, ref):
     for hyp_word in hyp_wc.keys():
         if ref_wc.get(hyp_word, None) is not None:
             match_count += min(ref_wc[hyp_word], hyp_wc[hyp_word])
+    if hyp_len == 0:
+        print(hyp)
+        raw_input()
     return(match_count/hyp_len)
 
 
@@ -126,6 +139,57 @@ def get_prediction(parallel_instance, tradeoff_param):
     else:
         return(0)
 
+def get_feat_vects(feats, parallel_instance, lda_feats, tradeoff_param=0.5 , lm_context=3):
+    global FEATS
+    f_vect = []
+    [h1_prec, h1_rec, h1_met], [h2_prec, h2_rec, h2_met] = get_prec_rec_whm(parallel_instance, tradeoff_param)
+    if 'prec' in feats:
+        f_vect.extend([h1_prec, h2_prec])
+    if 'rec' in feats:
+        f_vect.extend([h1_rec, h2_rec])
+    if 'whm' in feats:
+        f_vect.extend([h1_met, h2_met])
+    #f_vect.extend([h1_prec, h2_prec, h1_rec, h2_rec, h1_met, h2_met])
+    if 'lm_score' in feats:
+        assert lm_context == 3 or lm_context == 5, "Invalid LM specified"
+        if lm_context == 3:
+            f_vect.append(trigram_lm.score(parallel_instance[0]))
+            f_vect.append(trigram_lm.score(parallel_instance[1]))
+            f_vect.append(trigram_lm.score(parallel_instance[2]))
+            # f_vect.append(trigram_lm.score(parallel_instance[0])*1.0 / len(nltk.sent_tokenize(parallel_instance[0])))
+            # f_vect.append(trigram_lm.score(parallel_instance[1]))
+            # f_vect.append(trigram_lm.score(parallel_instance[2]))
+        else:
+            f_vect.append(pentagram_lm.score(parallel_instance[0]))
+            f_vect.append(pentagram_lm.score(parallel_instance[1]))
+            f_vect.append(pentagram_lm.score(parallel_instance[2]))
+    if 'lda' in feats:
+        f_vect.extend(lda_feats)
+    if 'len' in feats:
+        f_vect.extend([len(parallel_instance[0]), len(parallel_instance[1], len(parallel_instance[2]))])
+    return(np.array(f_vect))
+
+def get_accuracy(predicted_labels, gold_labels):
+    match_count = 0
+    for i in range(len(predicted_labels)):
+        if predicted_labels[i] == gold_labels[i]:
+            match_count += 1
+    return(match_count * 1.0/len(gold_labels))
+
+
+def get_wrong_instances(predictions, gold_labels, instances, error_file):
+    assert len(predictions) == len(instances) and len(predictions) == len(gold_labels), "Predictions and instances don't line up"
+    wrong_instances = []
+    for index, pred in enumerate(predictions):
+        if gold_labels[index] != pred:
+            wrong_instances.append((instances[index][0][0], instances[index][0][1], instances[index][0][2]))
+    with open(error_file, 'w') as error_f:
+        for wrong_instance in wrong_instances:
+            error_f.write(str(wrong_instance[0]) + '|||' + str(wrong_instance[1]) + '|||' + str(wrong_instance[2]) + '\n')
+
+
+
+
 """
 print("Fetching google word vectors")
 
@@ -142,6 +206,8 @@ split_index = int(len(labeled_instances) * TRAIN_SPLIT_RATIO)
 
 [labeled_lda_feats, unlabeled_lda_feats] = pickle.load(open(EXTRA_FEAT_FILE,'rb'))
 
+assert len(labeled_lda_feats) == len(labeled_instances) and len(unlabeled_lda_feats) == len(unlabeled_instances), "Features and instances don't match!"
+
 trigram_lm = kenlm.LanguageModel('europarl_en_lm_3gram.klm')
 pentagram_lm = kenlm.LanguageModel('europarl_en_lm_5gram.klm')
 print(trigram_lm.score('the european union'))
@@ -155,42 +221,15 @@ train_labels = []
 #test_feats = np.zeros((len(unlabeled_instances), 2*len(FEATS) + 1))
 test_feats = []
 
-def get_feat_vects(feats, parallel_instance, tradeoff_param, lm_context=3):
-    global FEATS
-    f_vect = []
-    [h1_prec, h1_rec, h1_met], [h2_prec, h2_rec, h2_met] = get_prec_rec_whm(parallel_instance, tradeoff_param)
-    f_vect.extend([h1_prec, h2_prec, h1_rec, h2_rec, h1_met, h2_met])
-    if 'lm_score' in feats:
-        assert lm_context == 3 or lm_context == 5, "Invalid LM specified"
-        if lm_context == 3:
-            f_vect.append(trigram_lm.score(parallel_instance[0]))
-            f_vect.append(trigram_lm.score(parallel_instance[1]))
-            f_vect.append(trigram_lm.score(parallel_instance[2]))
-            # f_vect.append(trigram_lm.score(parallel_instance[0])*1.0 / len(nltk.sent_tokenize(parallel_instance[0])))
-            # f_vect.append(trigram_lm.score(parallel_instance[1]))
-            # f_vect.append(trigram_lm.score(parallel_instance[2]))
-        else:
-            f_vect.append(pentagram_lm.score(parallel_instance[0]))
-            f_vect.append(pentagram_lm.score(parallel_instance[1]))
-            f_vect.append(pentagram_lm.score(parallel_instance[2]))
-    return(np.array(f_vect))
-
-def get_accuracy(predicted_labels, gold_labels):
-    match_count = 0
-    for i in range(len(predicted_labels)):
-        if predicted_labels[i] == gold_labels[i]:
-            match_count += 1
-    return(match_count * 1.0/len(gold_labels))
-
-
 with open(OUTPUT_FILE, 'w') as op_file:
     #METEOR baseline method
+    print("Assembling data matrices")
     for index, instance in enumerate(labeled_instances):
         parallel_instance = instance[0]
         label = instance[1]
         #op_file.write(str(get_prediction(parallel_instance, TRADEOFF_PARAM)) + '\n')
         #train_feats[index] = get_feat_vects(FEATS, parallel_instance, tradeoff_param=TRADEOFF_PARAM, lm_context=LM_CONTEXT_SIZE)
-        train_feats.append(get_feat_vects(FEATS, parallel_instance, tradeoff_param=TRADEOFF_PARAM, lm_context=LM_CONTEXT_SIZE))
+        train_feats.append(get_feat_vects(FEATS, parallel_instance, labeled_lda_feats[index], tradeoff_param=TRADEOFF_PARAM, lm_context=LM_CONTEXT_SIZE))
         #train_labels[index] = label
         train_labels.append(label)
     train_feats = np.array(train_feats)
@@ -205,7 +244,7 @@ with open(OUTPUT_FILE, 'w') as op_file:
         parallel_instance = instance
         #op_file.write(str(get_prediction(parallel_instance, TRADEOFF_PARAM)) + '\n')
         #test_feats[index] = get_feat_vects(FEATS, parallel_instance, tradeoff_param=TRADEOFF_PARAM, lm_context=LM_CONTEXT_SIZE)
-        test_feats.append(get_feat_vects(FEATS, parallel_instance, tradeoff_param=TRADEOFF_PARAM,
+        test_feats.append(get_feat_vects(FEATS, parallel_instance, unlabeled_lda_feats[index], tradeoff_param=TRADEOFF_PARAM,
                                            lm_context=LM_CONTEXT_SIZE))
 
     test_feats = np.array(test_feats)
@@ -217,6 +256,8 @@ with open(OUTPUT_FILE, 'w') as op_file:
     print(model.score(validation_feats, validation_labels))
     """
 
+    print("Training SVM")
+
     #svm_model = svm.SVC(decision_function_shape='ovo')
     svm_model = svm.SVC()
     svm_model.fit(train_feats, train_labels)
@@ -224,6 +265,11 @@ with open(OUTPUT_FILE, 'w') as op_file:
     #print(get_accuracy(preds, validation_labels))
     #dec = svm_model.decision_function(validation_feats)
     #print(dec)
+
+    all_labels = np.concatenate((train_labels, validation_labels))
+
+    get_wrong_instances(preds[:len(all_labels)], all_labels, labeled_instances, ERRORS_FILE)
+
 
     for pred in preds:
         op_file.write(str(pred) + '\n')
