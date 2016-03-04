@@ -1,6 +1,8 @@
 from utils import *
 #from nltk.stem.snowball import SnowballStemmer
 import kenlm
+import nltk
+from sklearn.linear_model import LogisticRegression
 
 """
 from gensim.models import Word2Vec as W2vec
@@ -16,7 +18,14 @@ HYP_FILE = "./data/train-test.hyp1-hyp2-ref_tok_lower"
 GOLD_FILE = "./data/train.gold"
 OUTPUT_FILE = "./output.txt"
 VEC_FILE = "./vecs/GoogleNews-vectors-negative300.bin"
-TRADEOFF_PARAM = 0.4# between 0 and 1 ---> closer to 0 means recall heavy, else, precision heavy
+TRADEOFF_PARAM = 0.45# between 0 and 1 ---> closer to 0 means recall heavy, else, precision heavy
+#Best so far is 0.45
+LM_CONTEXT_SIZE = 3
+#FEATS = ['prec','rec','whm','lm_score'] #prec, rec and whm cannot be toggled off
+FEATS = ['prec','rec','whm'] #prec, rec and whm cannot be toggled off
+TRAIN_SPLIT = 0.9
+
+
 #english_stemmer = SnowballStemmer("english")
 """
 TRAIN_SPLIT_RATIO = 0.85
@@ -84,8 +93,7 @@ def get_whm(prec, rec, tradeoff_param):
     return(1.0 / ((tradeoff_param/prec) + ((1 - tradeoff_param)/rec)))
 
 
-
-def get_prediction(parallel_instance, tradeoff_param):
+def get_prec_rec_whm(parallel_instance, tradeoff_param):
     [hyp1, hyp2, ref] = parallel_instance
     h1_prec = get_precision(hyp1, ref)
     h1_rec = get_recall(hyp1, ref)
@@ -93,6 +101,20 @@ def get_prediction(parallel_instance, tradeoff_param):
     h2_prec = get_precision(hyp2, ref)
     h2_rec = get_recall(hyp2, ref)
     h2_met = get_whm(h2_prec, h2_rec, tradeoff_param)
+    return([h1_prec, h1_rec, h1_met], [h2_prec, h2_rec, h2_met])
+
+
+
+def get_prediction(parallel_instance, tradeoff_param):
+    # [hyp1, hyp2, ref] = parallel_instance
+    # h1_prec = get_precision(hyp1, ref)
+    # h1_rec = get_recall(hyp1, ref)
+    # h1_met = get_whm(h1_prec, h1_rec, tradeoff_param)
+    # h2_prec = get_precision(hyp2, ref)
+    # h2_rec = get_recall(hyp2, ref)
+    # h2_met = get_whm(h2_prec, h2_rec, tradeoff_param)
+
+    [h1_prec, h1_rec, h1_met], [h2_prec, h2_rec, h2_met] = get_prec_rec_whm(parallel_instance, tradeoff_param)
 
     if h1_met > h2_met:
         return(-1)
@@ -106,7 +128,7 @@ print("Fetching google word vectors")
 
 pretrained_w2vec = W2vec.load_word2vec_format(VEC_FILE, binary=True)  # C binary format
 
-# Actually, try training your own word2vec model and use your vectors if they are absent from the google vecs
+# Actually, try training your own word2vec trigram_lm and use your vectors if they are absent from the google vecs
 [labeled_instances, unlabeled_instances, w2vec_model, word2index, index2word] = get_data_and_w2vec_dicts(HYP_FILE, GOLD_FILE, pretrained_w2vec)
 
 split_index = int(len(labeled_instances) * TRAIN_SPLIT_RATIO)
@@ -115,18 +137,72 @@ split_index = int(len(labeled_instances) * TRAIN_SPLIT_RATIO)
 #[labeled_instances, unlabeled_instances, w2vec_model, word2index, index2word] = get_data_and_w2vec_dicts(HYP_FILE, GOLD_FILE, pretrained_w2vec)
 [labeled_instances, unlabeled_instances, word2index, index2word] = get_data_and_w2vec_dicts(HYP_FILE, GOLD_FILE)
 
-model = kenlm.LanguageModel('europarl_en_lm.klm')
-print(model.score('the european union'))
+trigram_lm = kenlm.LanguageModel('europarl_en_lm_3gram.klm')
+pentagram_lm = kenlm.LanguageModel('europarl_en_lm_5gram.klm')
+print(trigram_lm.score('the european union'))
+print(pentagram_lm.score('the european union'))
+
+#train_feats = np.zeros((len(labeled_instances), 2*len(FEATS) + 1))
+train_feats = []
+#train_labels = np.zeros((len(labeled_instances),))
+train_labels = []
+
+#test_feats = np.zeros((len(unlabeled_instances), 2*len(FEATS) + 1))
+test_feats = []
+
+def get_feat_vects(feats, parallel_instance, tradeoff_param, lm_context=3):
+    global FEATS
+    f_vect = []
+    [h1_prec, h1_rec, h1_met], [h2_prec, h2_rec, h2_met] = get_prec_rec_whm(parallel_instance, tradeoff_param)
+    f_vect.extend([h1_prec, h2_prec, h1_rec, h2_rec, h1_met, h2_met])
+    if 'lm_score' in feats:
+        assert lm_context == 3 or lm_context == 5, "Invalid LM specified"
+        if lm_context == 3:
+            """
+            f_vect.append(trigram_lm.score(parallel_instance[0]))
+            f_vect.append(trigram_lm.score(parallel_instance[1]))
+            f_vect.append(trigram_lm.score(parallel_instance[2]))
+            """
+            f_vect.append(trigram_lm.score(parallel_instance[0])*1.0 / len(nltk.sent_tokenize(parallel_instance[0])))
+            f_vect.append(trigram_lm.score(parallel_instance[1]))
+            f_vect.append(trigram_lm.score(parallel_instance[2]))
+        else:
+            f_vect.append(pentagram_lm.score(parallel_instance[0]))
+            f_vect.append(pentagram_lm.score(parallel_instance[1]))
+            f_vect.append(pentagram_lm.score(parallel_instance[2]))
+    return(np.array(f_vect))
+
 
 with open(OUTPUT_FILE, 'w') as op_file:
     #METEOR baseline method
-    for instance in labeled_instances:
+    for index, instance in enumerate(labeled_instances):
         parallel_instance = instance[0]
-        op_file.write(str(get_prediction(parallel_instance, TRADEOFF_PARAM)) + '\n')
-    for instance in unlabeled_instances:
+        label = instance[1]
+        #op_file.write(str(get_prediction(parallel_instance, TRADEOFF_PARAM)) + '\n')
+        #train_feats[index] = get_feat_vects(FEATS, parallel_instance, tradeoff_param=TRADEOFF_PARAM, lm_context=LM_CONTEXT_SIZE)
+        train_feats.append(get_feat_vects(FEATS, parallel_instance, tradeoff_param=TRADEOFF_PARAM, lm_context=LM_CONTEXT_SIZE))
+        #train_labels[index] = label
+        train_labels.append(label)
+    train_feats = np.array(train_feats)
+    train_labels = np.array(train_labels)
+    split_index = int(TRAIN_SPLIT * len(train_feats))
+    validation_feats = train_feats[split_index:]
+    validation_labels = train_labels[split_index:]
+    train_feats = train_feats[:split_index]
+    train_labels = train_labels[:split_index]
+
+    for index,instance in enumerate(unlabeled_instances):
         parallel_instance = instance
-        op_file.write(str(get_prediction(parallel_instance, TRADEOFF_PARAM)) + '\n')
-    print("Finished writing output file with meteor method")
+        #op_file.write(str(get_prediction(parallel_instance, TRADEOFF_PARAM)) + '\n')
+        #test_feats[index] = get_feat_vects(FEATS, parallel_instance, tradeoff_param=TRADEOFF_PARAM, lm_context=LM_CONTEXT_SIZE)
+        test_feats.append(get_feat_vects(FEATS, parallel_instance, tradeoff_param=TRADEOFF_PARAM,
+                                           lm_context=LM_CONTEXT_SIZE))
+    #print("Finished writing output file with meteor method")
+test_feats = np.array(test_feats)
+# Logistic Regression:
+model = LogisticRegression()
+model = model.fit(train_feats, train_labels)
+print(model.score(validation_feats, validation_labels))
 
 
 """
@@ -163,7 +239,7 @@ ref_model.add(Embedding(input_dim=len(word2index), output_dim=get_wvec_size(pret
 print("Initialized embedding matrix with pretrained word vecs")
 ref_model.add(LSTM(output_dim=SENTENCE_EMBEDDING_LENGTH, init='zero'))# weights=[init_weights1, init_weights2, init_weights3]))
 ref_model.add(Activation('tanh'))
-print("Added LSTM model")
+print("Added LSTM trigram_lm")
 """
 
 """
@@ -183,7 +259,7 @@ hyp1_model.add(Embedding(input_dim=len(word2index), output_dim=get_wvec_size(pre
 print("Initialized embedding matrix with pretrained word vecs")
 hyp1_model.add(LSTM(output_dim=SENTENCE_EMBEDDING_LENGTH, init='zero')) #weights=[init_weights1, init_weights2, init_weights3]))
 hyp1_model.add(Activation('tanh'))
-print("Added LSTM model")
+print("Added LSTM trigram_lm")
 
 print("Building hyp1_model")
 hyp2_model = Sequential()
@@ -193,7 +269,7 @@ hyp2_model.add(Embedding(input_dim=len(word2index), output_dim=get_wvec_size(pre
 print("Initialized embedding matrix with pretrained word vecs")
 hyp2_model.add(LSTM(output_dim=SENTENCE_EMBEDDING_LENGTH, init='zero')) #weights=[init_weights1, init_weights2, init_weights3]))
 hyp2_model.add(Activation('tanh'))
-print("Added LSTM model")
+print("Added LSTM trigram_lm")
 
 
 combined_model = Sequential()
