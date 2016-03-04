@@ -19,9 +19,9 @@ from keras.optimizers import SGD
 """
 HYP_FILE = "./data/train-test.hyp1-hyp2-ref_tok_lower"
 GOLD_FILE = "./data/train.gold"
-OUTPUT_FILE = "./output.txt"
+OUTPUT_FILE = "output.txt"
 VEC_FILE = "./vecs/GoogleNews-vectors-negative300.bin"
-ERRORS_FILE = "./errors.txt"
+ERRORS_FILE = "errors.txt"
 TRADEOFF_PARAM = 0.45# between 0 and 1 ---> closer to 0 means recall heavy, else, precision heavy
 #Best so far is 0.45
 LM_CONTEXT_SIZE = 5
@@ -29,7 +29,7 @@ LM_CONTEXT_SIZE = 5
 FEATS = ['whm', 'len_word', 'len_char'] #prec, rec and whm cannot be toggled off
 TRAIN_SPLIT = 0.9
 EXTRA_FEAT_FILE = './ldafeatures.pickle'
-
+N_FOLDS = 1
 
 
 #english_stemmer = SnowballStemmer("english")
@@ -223,36 +223,62 @@ train_labels = []
 #test_feats = np.zeros((len(unlabeled_instances), 2*len(FEATS) + 1))
 test_feats = []
 
-with open(OUTPUT_FILE, 'w') as op_file:
-    #METEOR baseline method
-    print("Assembling data matrices")
-    for index, instance in enumerate(labeled_instances):
-        parallel_instance = instance[0]
-        label = instance[1]
-        #op_file.write(str(get_prediction(parallel_instance, TRADEOFF_PARAM)) + '\n')
-        #train_feats[index] = get_feat_vects(FEATS, parallel_instance, tradeoff_param=TRADEOFF_PARAM, lm_context=LM_CONTEXT_SIZE)
-        train_feats.append(get_feat_vects(FEATS, parallel_instance, labeled_lda_feats[index], tradeoff_param=TRADEOFF_PARAM, lm_context=LM_CONTEXT_SIZE))
-        #train_labels[index] = label
-        train_labels.append(label)
-    train_feats = np.array(train_feats)
-    train_labels = np.array(train_labels)
+
+def get_fold_data(train_feats, train_labels, fold, tot_folds):
+    n_in_fold = len(train_feats) / tot_folds
+
+    start_index = (fold - 1) * n_in_fold
+    end_index = start_index + n_in_fold
+
+    fold_train_feats = np.concatenate((train_feats[:start_index], train_feats[end_index:]))
+    fold_train_labels = np.concatenate((train_labels[:start_index], train_labels[end_index:]))
+
+    fold_val_feats = train_feats[start_index:end_index]
+    fold_val_labels = train_labels[start_index:end_index]
+    return([fold_train_feats, fold_train_labels, fold_val_feats, fold_val_labels])
+
+
+#METEOR baseline method
+print("Assembling data matrices")
+for index, instance in enumerate(labeled_instances):
+    parallel_instance = instance[0]
+    label = instance[1]
+    #op_file.write(str(get_prediction(parallel_instance, TRADEOFF_PARAM)) + '\n')
+    #train_feats[index] = get_feat_vects(FEATS, parallel_instance, tradeoff_param=TRADEOFF_PARAM, lm_context=LM_CONTEXT_SIZE)
+    train_feats.append(get_feat_vects(FEATS, parallel_instance, labeled_lda_feats[index], tradeoff_param=TRADEOFF_PARAM, lm_context=LM_CONTEXT_SIZE))
+    #train_labels[index] = label
+    train_labels.append(label)
+train_feats = np.array(train_feats)
+train_labels = np.array(train_labels)
+
+for index, instance in enumerate(unlabeled_instances):
+    parallel_instance = instance
+    # op_file.write(str(get_prediction(parallel_instance, TRADEOFF_PARAM)) + '\n')
+    # test_feats[index] = get_feat_vects(FEATS, parallel_instance, tradeoff_param=TRADEOFF_PARAM, lm_context=LM_CONTEXT_SIZE)
+    test_feats.append(
+        get_feat_vects(FEATS, parallel_instance, unlabeled_lda_feats[index], tradeoff_param=TRADEOFF_PARAM,
+                       lm_context=LM_CONTEXT_SIZE))
+
+test_feats = np.array(test_feats)
+
+
+for fold in [9]:
+    print("Fold %d"%(fold+1))
+
+    """
     split_index = int(TRAIN_SPLIT * len(train_feats))
     validation_feats = train_feats[split_index:]
     validation_labels = train_labels[split_index:]
     train_feats = train_feats[:split_index]
     train_labels = train_labels[:split_index]
+    """
 
-    print("Train dims:", train_feats.shape, train_labels.shape)
-    print("Val dims:", validation_feats.shape, validation_labels.shape)
+    [fold_train_feats, fold_train_labels, fold_val_feats, fold_val_labels] = get_fold_data(train_feats, train_labels, fold+1, N_FOLDS)
 
-    for index,instance in enumerate(unlabeled_instances):
-        parallel_instance = instance
-        #op_file.write(str(get_prediction(parallel_instance, TRADEOFF_PARAM)) + '\n')
-        #test_feats[index] = get_feat_vects(FEATS, parallel_instance, tradeoff_param=TRADEOFF_PARAM, lm_context=LM_CONTEXT_SIZE)
-        test_feats.append(get_feat_vects(FEATS, parallel_instance, unlabeled_lda_feats[index], tradeoff_param=TRADEOFF_PARAM,
-                                         lm_context=LM_CONTEXT_SIZE))
+    print("Fold Train dims:", fold_train_feats.shape, fold_train_labels.shape)
+    print("Fold Val dims:", fold_val_feats.shape, fold_val_labels.shape)
 
-    test_feats = np.array(test_feats)
+
     print("Test dims:", test_feats.shape)
 
     """
@@ -266,20 +292,27 @@ with open(OUTPUT_FILE, 'w') as op_file:
 
     #svm_model = svm.SVC(decision_function_shape='ovo')
     svm_model = svm.SVC()
-    svm_model.fit(train_feats, train_labels)
-    preds = svm_model.predict(np.concatenate((train_feats, validation_feats, test_feats)))
+    svm_model.fit(fold_train_feats, fold_train_labels)
+    print("For prediction")
+    print("Tot train: ", len(train_feats), len(train_labels))
+    print("Test :", len(test_feats))
+    print("Combined:", len(np.concatenate((train_feats, test_feats))))
+    preds = svm_model.predict(np.concatenate((train_feats, test_feats)))
     #print(get_accuracy(preds, validation_labels))
     #dec = svm_model.decision_function(validation_feats)
     #print(dec)
-
-    all_labels = np.concatenate((train_labels, validation_labels))
-
-    get_wrong_instances(preds[:len(all_labels)], all_labels, labeled_instances, ERRORS_FILE)
+    print("Predictions:",len(preds))
 
 
-    for pred in preds:
-        op_file.write(str(pred) + '\n')
-    print("Finished writing output file with meteor method")
+    #get_wrong_instances(preds[:len(all_fold_labels)], all_fold_labels, all_fold_instances, "fold" + str(fold+1) + ERRORS_FILE)
+    print_count = 0
+    with open("fold" + str(fold+1)+OUTPUT_FILE, 'w') as op_file:
+        for pred in preds:
+            print_count += 1
+            op_file.write(str(pred) + '\n')
+        print("%d labels printed"%(print_count))
+        print("Finished writing output file with meteor method")
+        raw_input("Press enter to continue with next fold")
 
 
 
