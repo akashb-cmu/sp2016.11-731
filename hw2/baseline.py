@@ -3,6 +3,8 @@ from utils import *
 import kenlm
 import nltk
 from sklearn.linear_model import LogisticRegression
+from sklearn import svm
+import pickle
 
 """
 from gensim.models import Word2Vec as W2vec
@@ -20,10 +22,11 @@ OUTPUT_FILE = "./output.txt"
 VEC_FILE = "./vecs/GoogleNews-vectors-negative300.bin"
 TRADEOFF_PARAM = 0.45# between 0 and 1 ---> closer to 0 means recall heavy, else, precision heavy
 #Best so far is 0.45
-LM_CONTEXT_SIZE = 3
+LM_CONTEXT_SIZE = 5
 #FEATS = ['prec','rec','whm','lm_score'] #prec, rec and whm cannot be toggled off
 FEATS = ['prec','rec','whm'] #prec, rec and whm cannot be toggled off
 TRAIN_SPLIT = 0.9
+EXTRA_FEAT_FILE = './ldafeatures.pickle'
 
 
 #english_stemmer = SnowballStemmer("english")
@@ -137,6 +140,8 @@ split_index = int(len(labeled_instances) * TRAIN_SPLIT_RATIO)
 #[labeled_instances, unlabeled_instances, w2vec_model, word2index, index2word] = get_data_and_w2vec_dicts(HYP_FILE, GOLD_FILE, pretrained_w2vec)
 [labeled_instances, unlabeled_instances, word2index, index2word] = get_data_and_w2vec_dicts(HYP_FILE, GOLD_FILE)
 
+[labeled_lda_feats, unlabeled_lda_feats] = pickle.load(open(EXTRA_FEAT_FILE,'rb'))
+
 trigram_lm = kenlm.LanguageModel('europarl_en_lm_3gram.klm')
 pentagram_lm = kenlm.LanguageModel('europarl_en_lm_5gram.klm')
 print(trigram_lm.score('the european union'))
@@ -158,19 +163,24 @@ def get_feat_vects(feats, parallel_instance, tradeoff_param, lm_context=3):
     if 'lm_score' in feats:
         assert lm_context == 3 or lm_context == 5, "Invalid LM specified"
         if lm_context == 3:
-            """
             f_vect.append(trigram_lm.score(parallel_instance[0]))
             f_vect.append(trigram_lm.score(parallel_instance[1]))
             f_vect.append(trigram_lm.score(parallel_instance[2]))
-            """
-            f_vect.append(trigram_lm.score(parallel_instance[0])*1.0 / len(nltk.sent_tokenize(parallel_instance[0])))
-            f_vect.append(trigram_lm.score(parallel_instance[1]))
-            f_vect.append(trigram_lm.score(parallel_instance[2]))
+            # f_vect.append(trigram_lm.score(parallel_instance[0])*1.0 / len(nltk.sent_tokenize(parallel_instance[0])))
+            # f_vect.append(trigram_lm.score(parallel_instance[1]))
+            # f_vect.append(trigram_lm.score(parallel_instance[2]))
         else:
             f_vect.append(pentagram_lm.score(parallel_instance[0]))
             f_vect.append(pentagram_lm.score(parallel_instance[1]))
             f_vect.append(pentagram_lm.score(parallel_instance[2]))
     return(np.array(f_vect))
+
+def get_accuracy(predicted_labels, gold_labels):
+    match_count = 0
+    for i in range(len(predicted_labels)):
+        if predicted_labels[i] == gold_labels[i]:
+            match_count += 1
+    return(match_count * 1.0/len(gold_labels))
 
 
 with open(OUTPUT_FILE, 'w') as op_file:
@@ -197,15 +207,32 @@ with open(OUTPUT_FILE, 'w') as op_file:
         #test_feats[index] = get_feat_vects(FEATS, parallel_instance, tradeoff_param=TRADEOFF_PARAM, lm_context=LM_CONTEXT_SIZE)
         test_feats.append(get_feat_vects(FEATS, parallel_instance, tradeoff_param=TRADEOFF_PARAM,
                                            lm_context=LM_CONTEXT_SIZE))
-    #print("Finished writing output file with meteor method")
-test_feats = np.array(test_feats)
-# Logistic Regression:
-model = LogisticRegression()
-model = model.fit(train_feats, train_labels)
-print(model.score(validation_feats, validation_labels))
+
+    test_feats = np.array(test_feats)
+
+    """
+    # Logistic Regression:
+    model = LogisticRegression()
+    model = model.fit(train_feats, train_labels)
+    print(model.score(validation_feats, validation_labels))
+    """
+
+    #svm_model = svm.SVC(decision_function_shape='ovo')
+    svm_model = svm.SVC()
+    svm_model.fit(train_feats, train_labels)
+    preds = svm_model.predict(np.concatenate((train_feats, validation_feats, test_feats)))
+    #print(get_accuracy(preds, validation_labels))
+    #dec = svm_model.decision_function(validation_feats)
+    #print(dec)
+
+    for pred in preds:
+        op_file.write(str(pred) + '\n')
+    print("Finished writing output file with meteor method")
+
 
 
 """
+#LSTM approach
     [train_ref_tensor, train_hyp1_tensor, train_hyp2_tensor, train_common_3way_labels], \
     [test_ref_tensor, test_hyp1_tensor, test_hyp2_tensor, test_common_3way_labels], \
     max_sentence_len = get_matrized_data(labeled_instances, word2index, TRAIN_SPLIT_RATIO)
